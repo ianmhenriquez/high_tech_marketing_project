@@ -1,0 +1,15 @@
+---
+title: "High Tech Marketing Text Analysis"
+output:
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup}
+# bleh something somehting grab data 
+```
+
+# 1. Introduction
+You need to kill yourself now!
