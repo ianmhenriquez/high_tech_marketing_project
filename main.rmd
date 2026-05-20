@@ -8,8 +8,121 @@ editor_options:
 ---
 
 ```{r setup}
-# bleh something somehting grab data 
+  # Set the CRAN mirror:
+  local({r <- getOption("repos")
+      r["CRAN"] <- "https://cran.rstudio.com/"
+      options(repos = r)}
+  )
+  # Install the packages used in this workbook:
+  packages <- c("RedditExtractoR", "httr", "jsonlite")
+  for (i in packages) {
+      if (!require(i, character.only = TRUE)) {
+          install.packages(i, dependencies = TRUE)
+          if (!require(i, character.only = TRUE)) {
+              stop(paste("Package", i, "could not be loaded even after installation."))
+          }
+      }
+  }
+
+#start gathering reddit data 
+library(RedditExtractoR)
+library(httr)
+library(jsonlite)
+
+`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+
+fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
+  api_url <- paste0(thread_url, ".json?limit=", limit)
+  response <- RETRY(
+    "GET",
+    api_url,
+    user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"),
+    times = attempts,
+    pause_base = 2,
+    pause_cap = 20,
+    terminate_on = c(400, 401, 403, 404)
+  )
+
+  if (http_error(response)) {
+    stop("HTTP ", status_code(response), " when fetching ", api_url)
+  }
+
+  payload <- fromJSON(content(response, as = "text", encoding = "UTF-8"), simplifyVector = FALSE)
+  post <- payload[[1]]$data$children[[1]]$data
+
+  flatten_comments <- function(children) {
+    if (!is.list(children)) {
+      return(data.frame())
+    }
+
+    rows <- list()
+
+    for (child in children) {
+      if (!is.null(child$kind) && child$kind == "t1") {
+        comment <- child$data
+        rows[[length(rows) + 1]] <- data.frame(
+          type = "comment",
+          id = comment$id %||% NA_character_,
+          parent_id = comment$parent_id %||% NA_character_,
+          author = comment$author %||% NA_character_,
+          body = comment$body %||% NA_character_,
+          score = comment$score %||% NA_real_,
+          created_utc = comment$created_utc %||% NA_real_,
+          stringsAsFactors = FALSE
+        )
+
+        replies <- if (is.list(comment$replies) && !is.null(comment$replies$data$children)) {
+          comment$replies$data$children
+        } else {
+          list()
+        }
+        if (length(replies) > 0) {
+          rows <- c(rows, flatten_comments(replies))
+        }
+      }
+    }
+
+    if (length(rows) == 0) {
+      return(data.frame())
+    }
+
+    do.call(rbind, rows)
+  }
+
+  comments <- flatten_comments(payload[[2]]$data$children %||% list())
+
+  data.frame(
+    type = c("post", comments$type),
+    id = c(post$id %||% NA_character_, comments$id),
+    parent_id = c(NA_character_, comments$parent_id),
+    author = c(post$author %||% NA_character_, comments$author),
+    body = c(post$selftext %||% post$title %||% NA_character_, comments$body),
+    score = c(post$score %||% NA_real_, comments$score),
+    created_utc = c(post$created_utc %||% NA_real_, comments$created_utc),
+    stringsAsFactors = FALSE
+  )
+}
+
+razr_posts <- tryCatch(
+  find_thread_urls(keywords="motorola razr 2025", 
+                   subreddit="Android", sort_by="top"),
+  error = function(e) {
+    message("Reddit search failed: ", conditionMessage(e))
+    data.frame(url = character())
+  }
+)
+
+razr_content <- if (nrow(razr_posts) > 0) {
+  tryCatch(
+    fetch_reddit_thread(razr_posts$url[1]),
+    error = function(e) {
+      message("Reddit content fetch failed: ", conditionMessage(e))
+      data.frame()
+    }
+  )
+} else {
+  data.frame()
+}
 ```
 
 # 1. Introduction
-You need to kill yourself now!
