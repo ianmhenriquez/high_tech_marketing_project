@@ -92,18 +92,21 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
     if (!is.list(children)) {
       return(data.frame())
     }
-
     rows <- list()
 
     for (child in children) {
       if (!is.null(child$kind) && child$kind == "t1") {
         comment <- child$data
+        # sanitize body to avoid embedded newlines/commas breaking CSVs
+        body_text <- comment$body %||% comment$body %||% NA_character_
+        if (!is.null(body_text)) body_text <- gsub("[\r\n]+", " ", body_text)
+
         rows[[length(rows) + 1]] <- data.frame(
           type = "comment",
           id = comment$id %||% NA_character_,
           parent_id = comment$parent_id %||% NA_character_,
           author = comment$author %||% NA_character_,
-          body = comment$body %||% NA_character_,
+          body = body_text,
           score = comment$score %||% NA_real_,
           created_utc = comment$created_utc %||% NA_real_,
           stringsAsFactors = FALSE
@@ -123,72 +126,123 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
       return(data.frame())
     }
 
-    do.call(rbind, rows)
+    # keep only well-formed data.frames
+    rows <- Filter(function(x) is.data.frame(x) && ncol(x) > 0, rows)
+    if (length(rows) == 0) return(data.frame())
+
+    tryCatch(
+      dplyr::bind_rows(rows),
+      error = function(e) {
+        message("Failed to bind comment rows: ", conditionMessage(e))
+        # as a last resort, coerce each row to a 1-row data.frame with the expected columns
+        cols <- c("type","id","parent_id","author","body","score","created_utc")
+        repaired <- lapply(rows, function(r) {
+          if (!is.data.frame(r)) return(NULL)
+          missing <- setdiff(cols, names(r))
+          for (m in missing) r[[m]] <- NA
+          r[cols]
+        })
+        repaired <- Filter(Negate(is.null), repaired)
+        if (length(repaired) == 0) return(data.frame())
+        dplyr::bind_rows(repaired)
+      }
+    )
   }
 
   comments <- flatten_comments(payload[[2]]$data$children %||% list())
 
-  data.frame(
-    type = c("post", comments$type),
-    id = c(post$id %||% NA_character_, comments$id),
-    parent_id = c(NA_character_, comments$parent_id),
-    author = c(post$author %||% NA_character_, comments$author),
-    body = c(post$selftext %||% post$title %||% NA_character_, comments$body),
-    score = c(post$score %||% NA_real_, comments$score),
-    created_utc = c(post$created_utc %||% NA_real_, comments$created_utc),
+  # sanitize post body/title
+  post_body <- post$selftext %||% post$title %||% NA_character_
+  if (!is.null(post_body)) post_body <- gsub("[\r\n]+", " ", post_body)
+
+  post_df <- data.frame(
+    type = "post",
+    id = post$id %||% NA_character_,
+    parent_id = NA_character_,
+    author = post$author %||% NA_character_,
+    body = post_body,
+    score = post$score %||% NA_real_,
+    created_utc = post$created_utc %||% NA_real_,
     stringsAsFactors = FALSE
+  )
+
+  if (!is.data.frame(comments)) comments <- data.frame()
+  tryCatch(
+    dplyr::bind_rows(post_df, comments),
+    error = function(e) {
+      message("Failed to combine post and comments: ", conditionMessage(e))
+      # return post only as fallback
+      post_df
+    }
   )
 }
 
 # if the cache exists and has content, use it; otherwise fetch fresh Reddit data.
-reddit_cache <- "data/reddit_content.csv"
-cache_ready <- file.exists(reddit_cache) && file.info(reddit_cache)$size > 1
+suppressWarnings({
+  reddit_cache <- "data/reddit_content.csv"
+  cache_ready <- file.exists(reddit_cache) && file.info(reddit_cache)$size > 1
 
-if (cache_ready) {
-  raw_df <- tryCatch(
-    read.csv(reddit_cache, stringsAsFactors = FALSE),
-    error = function(e) {
-      message("Reddit cache could not be read: ", conditionMessage(e))
-      data.frame()
-    }
-  )
-
-  if (nrow(raw_df) > 0) {
-    cat("Loaded Reddit content from cache:", nrow(raw_df), "\n")
-  } else {
-    message("Reddit cache is empty, fetching fresh data instead.")
-    cache_ready <- FALSE
-  }
-}
-
-if (!cache_ready) {
-  reddit_posts <- tryCatch(
-    find_thread_urls(keywords = "motorola razr 2025",
-                     subreddit = "Android", sort_by = "top"),
-    error = function(e) {
-      message("Reddit search failed: ", conditionMessage(e))
-      data.frame(url = character())
-    }
-  )
-
-  cat("Reddit thread URLs found:", nrow(reddit_posts), "\n")
-
-  raw_df <- if (nrow(reddit_posts) > 0) {
-    tryCatch(
-      fetch_reddit_thread(reddit_posts$url[1]),
+  if (cache_ready) {
+    raw_df <- tryCatch(
+      read.csv(reddit_cache, stringsAsFactors = FALSE),
       error = function(e) {
-        message("Reddit content fetch failed: ", conditionMessage(e))
+        message("Reddit cache could not be read: ", conditionMessage(e))
         data.frame()
       }
     )
-  } else {
-    message("No Reddit threads matched the search query.")
-    data.frame()
+
+    if (nrow(raw_df) > 0) {
+      cat("Loaded Reddit content from cache:", nrow(raw_df), "\n")
+    } else {
+      message("Reddit cache is empty, fetching fresh data instead.")
+      cache_ready <- FALSE
+    }
   }
 
-  # save the raw data to csv for future use and to avoid hitting api limits while developing
-  write.csv(raw_df, reddit_cache, row.names = FALSE)
-}
+  if (!cache_ready) {
+    # try to search more pages if the installed RedditExtractoR supports it
+    reddit_search_pages <- 20
+    reddit_max_threads <- 50
+
+    reddit_posts <- tryCatch({
+      args <- list(keywords = "motorola razr 2025", subreddit = "Android", sort_by = "top", page_threshold = reddit_search_pages)
+      do.call(find_thread_urls, args)
+    }, error = function(e) {
+      # fallback if the package version doesn't accept page_threshold
+      tryCatch(
+        find_thread_urls(keywords = "motorola razr 2025", subreddit = "Android", sort_by = "top"),
+        error = function(e2) {
+          message("Reddit search failed: ", conditionMessage(e2))
+          data.frame(url = character())
+        }
+      )
+    })
+
+    cat("Reddit thread URLs found:", nrow(reddit_posts), "\n")
+
+    if (nrow(reddit_posts) > 0) {
+      to_fetch <- head(reddit_posts$url, reddit_max_threads)
+      raw_list <- lapply(to_fetch, function(u) {
+        tryCatch(
+          fetch_reddit_thread(u),
+          error = function(e) {
+            message("Reddit content fetch failed for ", u, ": ", conditionMessage(e))
+            data.frame()
+          }
+        )
+      })
+
+      # combine only non-empty results
+      raw_df <- dplyr::bind_rows(Filter(function(x) is.data.frame(x) && nrow(x) > 0, raw_list))
+    } else {
+      message("No Reddit threads matched the search query.")
+      raw_df <- data.frame()
+    }
+
+    # save the raw data to csv for future use and to avoid hitting api limits while developing
+    write.csv(raw_df, reddit_cache, row.names = FALSE)
+  }
+})
 
 cat("Rows collected:", nrow(raw_df), "\n")
 cat("Posts vs comments:\n")
