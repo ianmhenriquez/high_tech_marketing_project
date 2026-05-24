@@ -1,5 +1,7 @@
 ---
 title: "High Tech Marketing Text Analysis"
+subtitle: "Brand: Motorola Razr 2025"
+author: "Group 12?"
 output:
   pdf_document: default
 editor_options: 
@@ -7,30 +9,52 @@ editor_options:
     wrap: 72
 ---
 
-```{r setup}
-  # Set the CRAN mirror:
-  local({r <- getOption("repos")
-      r["CRAN"] <- "https://cran.rstudio.com/"
-      options(repos = r)}
-  )
-  # Install the packages used in this workbook:
-  packages <- c("RedditExtractoR", "httr", "jsonlite")
-  for (i in packages) {
-      if (!require(i, character.only = TRUE)) {
-          install.packages(i, dependencies = TRUE)
-          if (!require(i, character.only = TRUE)) {
-              stop(paste("Package", i, "could not be loaded even after installation."))
-          }
-      }
+```{r setup, include=FALSE}
+#setup packages and stuff, include false so it doesn't show up.
+# Set the CRAN mirror:
+local({r <- getOption("repos")
+  r["CRAN"] <- "https://cran.rstudio.com/"
+  options(repos = r)}
+)
+# Install the packages used in this workbook:
+packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr")
+for (i in packages) {
+  if (!require(i, character.only = TRUE)) {
+    install.packages(i, dependencies = TRUE)
+    if (!require(i, character.only = TRUE)) {
+      stop(paste("Package", i, "could not be loaded even after installation."))
+    }
   }
+}
 
-#start gathering reddit data 
+#load the libraries
 library(RedditExtractoR)
 library(httr)
 library(jsonlite)
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(wordcloud)
+library(topicmodels)
+library(LDAvis)
+library(stringr)
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+```
 
+# Introduction
+Explain shit here philippe 8=====D
+
+# Sample Selection
+
+## Data Sources
+Explain which sources we used to grab the data and why these are good sources for the analysis
+
+## Sampling representation & Bias
+Explain if the sample is representative of all customers, and how platform choice may skew results e.g Reddit chuds are not normal people.
+
+# Data Collection
+```{r reddit-fetch, echo=TRUE}
 fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
   api_url <- paste0(thread_url, ".json?limit=", limit)
   response <- RETRY(
@@ -70,7 +94,6 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
           created_utc = comment$created_utc %||% NA_real_,
           stringsAsFactors = FALSE
         )
-
         replies <- if (is.list(comment$replies) && !is.null(comment$replies$data$children)) {
           comment$replies$data$children
         } else {
@@ -123,6 +146,59 @@ razr_content <- if (nrow(razr_posts) > 0) {
 } else {
   data.frame()
 }
+
+raw_df <- do.call(rbind, Filter(nrow, razr_content))
+
+cat("Rows collected:", nrow(raw_df), "\n")
+cat("Posts vs comments:\n")
+print(table(raw_df$type))
 ```
 
-# 1. Introduction
+```{r amazon-fetch, echo=TRUE}
+# Placeholder for Amazon reviews fetching code
+```
+
+```{r youtube-fetch, echo=TRUE}
+# Placeholder for YouTube comments fetching code
+```
+
+```{r twitter-fetch, echo=TRUE}
+# Placeholder for Twitter mentions fetching code
+```
+
+# Pre-Processing
+Side note maybe we dont have to do all of them based on the quality of the data we get, but we should at least explain how we would do them and why they are important.
+## Filtering & Cleaning
+Explain how we cleaned the data and why.
+
+## Tokenization
+Explain how we tokenized the data and why.
+
+## Stop Words Removal
+Explain how we removed stop words and why.
+
+## Stemming & Lemmatization
+
+## Frequency Filter
+
+## Synonym consolidation
+
+## Summary Statistics
+
+# Topic Modeling (LDA)
+
+## Build Document
+
+## Optimal K
+
+## Fit Model
+
+## Stability
+
+# Results
+
+## Topic Word Distributions
+
+## Sometother shit
+
+# Reflection
