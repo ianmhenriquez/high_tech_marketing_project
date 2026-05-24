@@ -39,6 +39,20 @@ library(topicmodels)
 library(LDAvis)
 library(stringr)
 
+env_file <- ".env"
+if (requireNamespace("knitr", quietly = TRUE)) {
+  input_file <- knitr::current_input()
+  if (!is.null(input_file)) {
+    env_file <- file.path(dirname(input_file), ".env")
+  }
+}
+
+if (file.exists(env_file)) {
+  readRenviron(env_file)
+} else if (file.exists(".env")) {
+  readRenviron(".env")
+}
+
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 ```
 
@@ -126,28 +140,55 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
   )
 }
 
-razr_posts <- tryCatch(
-  find_thread_urls(keywords="motorola razr 2025", 
-                   subreddit="Android", sort_by="top"),
-  error = function(e) {
-    message("Reddit search failed: ", conditionMessage(e))
-    data.frame(url = character())
-  }
-)
+# if the cache exists and has content, use it; otherwise fetch fresh Reddit data.
+reddit_cache <- "data/reddit_content.csv"
+cache_ready <- file.exists(reddit_cache) && file.info(reddit_cache)$size > 1
 
-razr_content <- if (nrow(razr_posts) > 0) {
-  tryCatch(
-    fetch_reddit_thread(razr_posts$url[1]),
+if (cache_ready) {
+  raw_df <- tryCatch(
+    read.csv(reddit_cache, stringsAsFactors = FALSE),
     error = function(e) {
-      message("Reddit content fetch failed: ", conditionMessage(e))
+      message("Reddit cache could not be read: ", conditionMessage(e))
       data.frame()
     }
   )
-} else {
-  data.frame()
+
+  if (nrow(raw_df) > 0) {
+    cat("Loaded Reddit content from cache:", nrow(raw_df), "\n")
+  } else {
+    message("Reddit cache is empty, fetching fresh data instead.")
+    cache_ready <- FALSE
+  }
 }
 
-raw_df <- do.call(rbind, Filter(nrow, razr_content))
+if (!cache_ready) {
+  reddit_posts <- tryCatch(
+    find_thread_urls(keywords = "motorola razr 2025",
+                     subreddit = "Android", sort_by = "top"),
+    error = function(e) {
+      message("Reddit search failed: ", conditionMessage(e))
+      data.frame(url = character())
+    }
+  )
+
+  cat("Reddit thread URLs found:", nrow(reddit_posts), "\n")
+
+  raw_df <- if (nrow(reddit_posts) > 0) {
+    tryCatch(
+      fetch_reddit_thread(reddit_posts$url[1]),
+      error = function(e) {
+        message("Reddit content fetch failed: ", conditionMessage(e))
+        data.frame()
+      }
+    )
+  } else {
+    message("No Reddit threads matched the search query.")
+    data.frame()
+  }
+
+  # save the raw data to csv for future use and to avoid hitting api limits while developing
+  write.csv(raw_df, reddit_cache, row.names = FALSE)
+}
 
 cat("Rows collected:", nrow(raw_df), "\n")
 cat("Posts vs comments:\n")
@@ -155,15 +196,120 @@ print(table(raw_df$type))
 ```
 
 ```{r amazon-fetch, echo=TRUE}
-# Placeholder for Amazon reviews fetching code
+# we fetched via outscrapper which was exported as a a csv so we just read the file here :)
+# due to limitations with the api price, only a subset of reviews are collected, from a subset of razr products and georaphical locations (i.e us only)
+
+#cat("Reviews collected:", nrow(amazon_reviews), "\n")
+#cat("Rating distribution:\n")
+#print(table(amazon_reviews$rating))
 ```
 
 ```{r youtube-fetch, echo=TRUE}
-# Placeholder for YouTube comments fetching code
-```
+fetch_youtube_comments <- function(video_id, max_comments = 200, api_key = Sys.getenv("YOUTUBE_KEY")) {
+  if (identical(api_key, "")) {
+    stop("YOUTUBE_KEY is not set. Load it from .env or your environment before knitting.")
+  }
 
-```{r twitter-fetch, echo=TRUE}
-# Placeholder for Twitter mentions fetching code
+  all_comments <- list()
+  page_token   <- NULL
+
+  repeat {
+    query <- list(
+      part       = "snippet",
+      videoId    = video_id,
+      maxResults = 100,
+      textFormat = "plainText",
+      key        = api_key
+    )
+
+    # Add pagination token if we have one
+    if (!is.null(page_token)) {
+      query$pageToken <- page_token
+    }
+
+    resp <- httr::GET(
+      "https://www.googleapis.com/youtube/v3/commentThreads",
+      query = query
+    )
+
+    if (httr::http_error(resp)) {
+      error_body <- tryCatch(
+        httr::content(resp, as = "text", encoding = "UTF-8"),
+        error = function(e) ""
+      )
+      message("YouTube API error: ", httr::status_code(resp), if (nzchar(error_body)) paste0(" - ", error_body) else "")
+      break
+    }
+
+    parsed <- jsonlite::fromJSON(
+      httr::content(resp, as = "text", encoding = "UTF-8"),
+      flatten = TRUE
+    )
+
+    # Extract top-level comments
+    items <- parsed$items
+
+    if (is.null(items) || nrow(items) == 0) break
+
+    batch <- data.frame(
+      comment_id    = items$id,
+      author        = items$snippet.topLevelComment.snippet.authorDisplayName,
+      body          = items$snippet.topLevelComment.snippet.textDisplay,
+      like_count    = items$snippet.topLevelComment.snippet.likeCount,
+      reply_count   = items$snippet.totalReplyCount,
+      date          = items$snippet.topLevelComment.snippet.publishedAt,
+      stringsAsFactors = FALSE
+    )
+
+    all_comments[[length(all_comments) + 1]] <- batch
+    collected <- sum(sapply(all_comments, nrow))
+    message("Collected: ", collected, " comments")
+
+    # Check for next page
+    page_token <- parsed$nextPageToken
+
+    if (is.null(page_token) || collected >= max_comments) break
+
+    Sys.sleep(0.5)
+  }
+
+  if (length(all_comments) == 0) return(data.frame())
+
+  dplyr::bind_rows(all_comments) %>%
+    dplyr::mutate(
+      source  = "youtube",
+      # Like count as proxy for sentiment strength
+      segment = dplyr::case_when(
+        like_count >= quantile(like_count, 0.66, na.rm = TRUE) ~ "positive",
+        like_count <= quantile(like_count, 0.33, na.rm = TRUE) ~ "negative",
+        TRUE ~ "neutral"
+      )
+    )
+}
+razr_videos <- list(
+  mkbhd      = "8om1eJrO2lU",   # MKBHD Razr 2025 review
+  dave2d     = "JTT67FSc8j8",   # shortCircuit review
+  mrmobile   = "YGTkjchlVJk",   # MrMobile review
+  phonearena = "b3Ijuf7DHcQ"    # PhoneArena review
+)
+
+# to save on api calls, we check if we have a local csv of comments already, if not we fetch and save for next time.
+if (file.exists("data/youtube_comments.csv")) {
+  youtube_all <- read.csv("data/youtube_comments.csv", stringsAsFactors = FALSE)
+  cat("Loaded YouTube comments from CSV:", nrow(youtube_all), "\n")
+} else {
+  youtube_all <- purrr::map2_dfr(
+    razr_videos,
+    names(razr_videos),
+  ~   fetch_youtube_comments(.x, max_comments = 200) %>%
+        dplyr::mutate(channel = .y)
+  )
+  # Save to CSV for future runs
+  write.csv(youtube_all, "data/youtube_comments.csv", row.names = FALSE);
+}
+
+cat("YouTube comments collected:", nrow(youtube_all), "\n")
+print(table(youtube_all$channel))
 ```
 
 # Pre-Processing
