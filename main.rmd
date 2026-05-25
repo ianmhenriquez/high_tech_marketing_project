@@ -17,7 +17,7 @@ local({r <- getOption("repos")
   options(repos = r)}
 )
 # Install the packages used in this workbook:
-packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr")
+packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr", "purrr", "quanteda", "sentimentr")
 for (i in packages) {
   if (!require(i, character.only = TRUE)) {
     install.packages(i, dependencies = TRUE)
@@ -38,6 +38,9 @@ library(wordcloud)
 library(topicmodels)
 library(LDAvis)
 library(stringr)
+library(purrr)
+library(quanteda)
+library(sentimentr)
 
 env_file <- ".env"
 if (requireNamespace("knitr", quietly = TRUE)) {
@@ -60,9 +63,10 @@ if (file.exists(env_file)) {
 Explain shit here philippe 8=====D
 
 # Sample Selection
+We decided to go with mulitiple sources of text in an attempt to capture multiple perspectives on the Razr and avoid pigeon hollling into one corner of the internet which may have skewed results. 
 
 ## Data Sources
-Explain which sources we used to grab the data and why these are good sources for the analysis
+We grabbed our shit from Reddit threads about the Motorola Razr 2025 (pain in my ass) and Youtube comments from popular tech youtubers who reviewed the Razr 2025
 
 ## Sampling representation & Bias
 Explain if the sample is representative of all customers, and how platform choice may skew results e.g Reddit chuds are not normal people.
@@ -74,10 +78,12 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
   response <- RETRY(
     "GET",
     api_url,
-    user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"),
-    times = attempts,
-    pause_base = 2,
-    pause_cap = 20,
+    user_agent(paste0("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ",
+                      "AppleWebKit/537.36 (KHTML, like Gecko) ",
+                      "Chrome/125.0.0.0 Safari/537.36")),
+    times        = attempts,
+    pause_base   = 2,
+    pause_cap    = 20,
     terminate_on = c(400, 401, 403, 404)
   )
 
@@ -85,177 +91,154 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
     stop("HTTP ", status_code(response), " when fetching ", api_url)
   }
 
-  payload <- fromJSON(content(response, as = "text", encoding = "UTF-8"), simplifyVector = FALSE)
+  payload <- fromJSON(
+    content(response, as = "text", encoding = "UTF-8"),
+    simplifyVector = FALSE
+  )
   post <- payload[[1]]$data$children[[1]]$data
 
   flatten_comments <- function(children) {
-    if (!is.list(children)) {
-      return(data.frame())
-    }
+    if (!is.list(children)) return(data.frame())
     rows <- list()
-
     for (child in children) {
       if (!is.null(child$kind) && child$kind == "t1") {
-        comment <- child$data
-        # sanitize body to avoid embedded newlines/commas breaking CSVs
-        body_text <- comment$body %||% comment$body %||% NA_character_
+        comment   <- child$data
+        body_text <- comment$body %||% NA_character_
         if (!is.null(body_text)) body_text <- gsub("[\r\n]+", " ", body_text)
-
         rows[[length(rows) + 1]] <- data.frame(
-          type = "comment",
-          id = comment$id %||% NA_character_,
+          type      = "comment",
+          id        = comment$id        %||% NA_character_,
           parent_id = comment$parent_id %||% NA_character_,
-          author = comment$author %||% NA_character_,
-          body = body_text,
-          score = comment$score %||% NA_real_,
-          created_utc = comment$created_utc %||% NA_real_,
+          author    = comment$author    %||% NA_character_,
+          body      = body_text,
+          score     = comment$score     %||% NA_real_,      # keep score for segmentation
+          subreddit = comment$subreddit %||% NA_character_, # keep subreddit for segmentation
           stringsAsFactors = FALSE
         )
-        replies <- if (is.list(comment$replies) && !is.null(comment$replies$data$children)) {
-          comment$replies$data$children
-        } else {
-          list()
-        }
-        if (length(replies) > 0) {
+        replies <- if (is.list(comment$replies) &&
+                       !is.null(comment$replies$data$children))
+          comment$replies$data$children else list()
+        if (length(replies) > 0)
           rows <- c(rows, flatten_comments(replies))
-        }
       }
     }
-
-    if (length(rows) == 0) {
-      return(data.frame())
-    }
-
-    # keep only well-formed data.frames
+    if (length(rows) == 0) return(data.frame())
     rows <- Filter(function(x) is.data.frame(x) && ncol(x) > 0, rows)
     if (length(rows) == 0) return(data.frame())
-
     tryCatch(
       dplyr::bind_rows(rows),
       error = function(e) {
-        message("Failed to bind comment rows: ", conditionMessage(e))
-        # as a last resort, coerce each row to a 1-row data.frame with the expected columns
-        cols <- c("type","id","parent_id","author","body","score","created_utc")
+        cols     <- c("type","id","parent_id","author","body","score","subreddit")
         repaired <- lapply(rows, function(r) {
           if (!is.data.frame(r)) return(NULL)
-          missing <- setdiff(cols, names(r))
-          for (m in missing) r[[m]] <- NA
+          for (m in setdiff(cols, names(r))) r[[m]] <- NA
           r[cols]
         })
-        repaired <- Filter(Negate(is.null), repaired)
-        if (length(repaired) == 0) return(data.frame())
-        dplyr::bind_rows(repaired)
+        dplyr::bind_rows(Filter(Negate(is.null), repaired))
       }
     )
   }
 
-  comments <- flatten_comments(payload[[2]]$data$children %||% list())
-
-  # sanitize post body/title
+  comments  <- flatten_comments(payload[[2]]$data$children %||% list())
   post_body <- post$selftext %||% post$title %||% NA_character_
   if (!is.null(post_body)) post_body <- gsub("[\r\n]+", " ", post_body)
 
   post_df <- data.frame(
-    type = "post",
-    id = post$id %||% NA_character_,
+    type      = "post",
+    id        = post$id     %||% NA_character_,
     parent_id = NA_character_,
-    author = post$author %||% NA_character_,
-    body = post_body,
-    score = post$score %||% NA_real_,
-    created_utc = post$created_utc %||% NA_real_,
+    author    = post$author %||% NA_character_,
+    body      = post_body,
+    score     = post$score  %||% NA_real_,
+    subreddit = post$subreddit %||% NA_character_,
     stringsAsFactors = FALSE
   )
 
   if (!is.data.frame(comments)) comments <- data.frame()
   tryCatch(
     dplyr::bind_rows(post_df, comments),
-    error = function(e) {
-      message("Failed to combine post and comments: ", conditionMessage(e))
-      # return post only as fallback
-      post_df
-    }
+    error = function(e) post_df
   )
 }
 
-# if the cache exists and has content, use it; otherwise fetch fresh Reddit data.
 suppressWarnings({
-  reddit_cache <- "data/reddit_content.csv"
-  cache_ready <- file.exists(reddit_cache) && file.info(reddit_cache)$size > 1
+  reddit_cache <- "data/reddit_content.csv" 
+  cached <- file.exists(reddit_cache)
 
-  if (cache_ready) {
+  if (cached) {
     raw_df <- tryCatch(
       read.csv(reddit_cache, stringsAsFactors = FALSE),
-      error = function(e) {
-        message("Reddit cache could not be read: ", conditionMessage(e))
-        data.frame()
-      }
+      error = function(e) { message("Cache read failed: ", conditionMessage(e)); data.frame() }
+    )
+  }
+  else {
+    search_config <- list(
+      list(sub = "Android",       kw = "motorola razr"),
+      list(sub = "Android",       kw = "razr 2025"),
+      list(sub = "Android",       kw = "razr flip"),
+      list(sub = "Motorola",      kw = "razr"),
+      list(sub = "Motorola",      kw = "razr ultra"),
+      list(sub = "Motorola",      kw = "razr plus"),
+      list(sub = "phones",        kw = "razr"),
+      list(sub = "phones",        kw = "motorola"),
+      list(sub = "smartphones",   kw = "motorola razr"),
+      list(sub = "razr",          kw = "razr"),
+      list(sub = "razr",          kw = "motorola"),
+      list(sub = "technology",    kw = "motorola razr"),
+      list(sub = "technology",    kw = "razr 2025")
     )
 
-    if (nrow(raw_df) > 0) {
-      cat("Loaded Reddit content from cache:", nrow(raw_df), "\n")
-    } else {
-      message("Reddit cache is empty, fetching fresh data instead.")
-      cache_ready <- FALSE
-    }
-  }
+    reddit_posts <- dplyr::bind_rows(Filter(
+      function(x) is.data.frame(x) && nrow(x) > 0,   # add this Filter wrapper
+      lapply(search_config, function(cfg) {
+        result <- tryCatch({
+          Sys.sleep(2)
+          find_thread_urls(keywords = cfg$kw, subreddit = cfg$sub, sort_by = "top")
+        }, error = function(e) {
+          message("Failed r/", cfg$sub, " / '", cfg$kw, "': ", conditionMessage(e))
+          data.frame(url = character())  # always return a data frame, never NULL
+        })
+        cat("r/", cfg$sub, "/ '", cfg$kw, "' ->", 
+            if (is.data.frame(result)) nrow(result) else "ERROR", "threads\n")
+        # Ensure we always return a data frame regardless of what find_thread_urls gives back
+        if (!is.data.frame(result)) return(data.frame(url = character()))
+        result
+      })
+    )) |> dplyr::distinct(url, .keep_all = TRUE)
 
-  if (!cache_ready) {
-    # try to search more pages if the installed RedditExtractoR supports it
-    reddit_search_pages <- 20
-    reddit_max_threads <- 50
+    cat("Total unique threads:", nrow(reddit_posts), "\n")
 
-    reddit_posts <- tryCatch({
-      args <- list(keywords = "motorola razr 2025", subreddit = "Android", sort_by = "top", page_threshold = reddit_search_pages)
-      do.call(find_thread_urls, args)
-    }, error = function(e) {
-      # fallback if the package version doesn't accept page_threshold
-      tryCatch(
-        find_thread_urls(keywords = "motorola razr 2025", subreddit = "Android", sort_by = "top"),
-        error = function(e2) {
-          message("Reddit search failed: ", conditionMessage(e2))
-          data.frame(url = character())
-        }
-      )
-    })
-
-    cat("Reddit thread URLs found:", nrow(reddit_posts), "\n")
+    reddit_max_threads <- 250
 
     if (nrow(reddit_posts) > 0) {
       to_fetch <- head(reddit_posts$url, reddit_max_threads)
-      raw_list <- lapply(to_fetch, function(u) {
+      raw_list <- lapply(seq_along(to_fetch), function(i) {
+        Sys.sleep(1)
+        message("Thread ", i, "/", length(to_fetch))
         tryCatch(
-          fetch_reddit_thread(u),
+          fetch_reddit_thread(to_fetch[i]),
           error = function(e) {
-            message("Reddit content fetch failed for ", u, ": ", conditionMessage(e))
+            message("Failed: ", conditionMessage(e))
             data.frame()
           }
         )
       })
-
-      # combine only non-empty results
-      raw_df <- dplyr::bind_rows(Filter(function(x) is.data.frame(x) && nrow(x) > 0, raw_list))
+      raw_df <- dplyr::bind_rows(
+        Filter(function(x) is.data.frame(x) && nrow(x) > 0, raw_list)
+      )
     } else {
-      message("No Reddit threads matched the search query.")
       raw_df <- data.frame()
     }
 
-    # save the raw data to csv for future use and to avoid hitting api limits while developing
-    write.csv(raw_df, reddit_cache, row.names = FALSE)
+    write.csv(raw_df, reddit_cache, row.names = FALSE) 
   }
 })
 
-cat("Rows collected:", nrow(raw_df), "\n")
+cat("Total rows:", nrow(raw_df), "\n")
 cat("Posts vs comments:\n")
 print(table(raw_df$type))
-```
-
-```{r amazon-fetch, echo=TRUE}
-# we fetched via outscrapper which was exported as a a csv so we just read the file here :)
-# due to limitations with the api price, only a subset of reviews are collected, from a subset of razr products and georaphical locations (i.e us only)
-
-#cat("Reviews collected:", nrow(amazon_reviews), "\n")
-#cat("Rating distribution:\n")
-#print(table(amazon_reviews$rating))
+cat("By subreddit:\n")
+print(table(raw_df$subreddit))
 ```
 
 ```{r youtube-fetch, echo=TRUE}
@@ -309,9 +292,6 @@ fetch_youtube_comments <- function(video_id, max_comments = 200, api_key = Sys.g
       comment_id    = items$id,
       author        = items$snippet.topLevelComment.snippet.authorDisplayName,
       body          = items$snippet.topLevelComment.snippet.textDisplay,
-      like_count    = items$snippet.topLevelComment.snippet.likeCount,
-      reply_count   = items$snippet.totalReplyCount,
-      date          = items$snippet.topLevelComment.snippet.publishedAt,
       stringsAsFactors = FALSE
     )
 
@@ -328,21 +308,11 @@ fetch_youtube_comments <- function(video_id, max_comments = 200, api_key = Sys.g
   }
 
   if (length(all_comments) == 0) return(data.frame())
-
-  dplyr::bind_rows(all_comments) %>%
-    dplyr::mutate(
-      source  = "youtube",
-      # Like count as proxy for sentiment strength
-      segment = dplyr::case_when(
-        like_count >= quantile(like_count, 0.66, na.rm = TRUE) ~ "positive",
-        like_count <= quantile(like_count, 0.33, na.rm = TRUE) ~ "negative",
-        TRUE ~ "neutral"
-      )
-    )
+  dplyr::bind_rows(all_comments) |> dplyr::mutate(source = "youtube");
 }
 razr_videos <- list(
   mkbhd      = "8om1eJrO2lU",   # MKBHD Razr 2025 review
-  dave2d     = "JTT67FSc8j8",   # shortCircuit review
+  dave2d     = "JTT67FSc8j8",   # ShortCircuit review
   mrmobile   = "YGTkjchlVJk",   # MrMobile review
   phonearena = "b3Ijuf7DHcQ"    # PhoneArena review
 )
@@ -365,11 +335,34 @@ if (file.exists("data/youtube_comments.csv")) {
 cat("YouTube comments collected:", nrow(youtube_all), "\n")
 print(table(youtube_all$channel))
 ```
+# Exploration
+Lets have a gander at the data we collected and see if theres any thing fun before we clean it up. 
+```{r exploration, echo=TRUE}
+# reddit 
+cat("Reddit - Posts vs Comments:\n")
+print(table(raw_df$type))
+cat("\nReddit - Top Authors:\n")
+print(head(sort(table(raw_df$author), decreasing = TRUE), 10))
+cat("\nReddit - Sample Content:\n")
+print(head(raw_df$body, 5))
 
+
+```
 # Pre-Processing
+we have 2 separate data frames for reddit, and youtube, we need to merge them into one big one for the text analysis. We can add a column to indicate the source of each row and then bind them together.
+```{r merge-data, echo=FALSE}
+# merge data frames by piping them so i dont lose my mind.
+reddit_df <- raw_df |> filter(type == "comment") |> select(author, body) |> mutate(source = "reddit")
+youtube_df <- youtube_all |> select(author, body) |> mutate(source = "youtube")
+combined_df <- bind_rows(reddit_df, youtube_df)
+```
 Side note maybe we dont have to do all of them based on the quality of the data we get, but we should at least explain how we would do them and why they are important.
+
 ## Filtering & Cleaning
-Explain how we cleaned the data and why.
+```{r data-cleaning, echo=TRUE}
+# We're gonna filter out weird characters, emojies, and other shit we dont use
+
+```
 
 ## Tokenization
 Explain how we tokenized the data and why.
