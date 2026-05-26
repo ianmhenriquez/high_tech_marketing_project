@@ -166,7 +166,7 @@ suppressWarnings({
   cached <- file.exists(reddit_cache)
 
   if (cached) {
-    raw_df <- tryCatch(
+    reddit_all <- tryCatch(
       read.csv(reddit_cache, stringsAsFactors = FALSE),
       error = function(e) { message("Cache read failed: ", conditionMessage(e)); data.frame() }
     )
@@ -223,22 +223,22 @@ suppressWarnings({
           }
         )
       })
-      raw_df <- dplyr::bind_rows(
+      reddit_all <- dplyr::bind_rows(
         Filter(function(x) is.data.frame(x) && nrow(x) > 0, raw_list)
       )
     } else {
-      raw_df <- data.frame()
+      reddit_all <- data.frame()
     }
 
-    write.csv(raw_df, reddit_cache, row.names = FALSE) 
+    write.csv(reddit_all, reddit_cache, row.names = FALSE) 
   }
 })
 
-cat("Total rows:", nrow(raw_df), "\n")
+cat("Total rows:", nrow(reddit_all), "\n")
 cat("Posts vs comments:\n")
-print(table(raw_df$type))
+print(table(reddit_all$type))
 cat("By subreddit:\n")
-print(table(raw_df$subreddit))
+print(table(reddit_all$subreddit))
 ```
 
 ```{r youtube-fetch, echo=TRUE}
@@ -339,31 +339,50 @@ print(table(youtube_all$channel))
 Lets have a gander at the data we collected and see if theres any thing fun before we clean it up. 
 ```{r exploration, echo=TRUE}
 # reddit 
-cat("Reddit - Posts vs Comments:\n")
-print(table(raw_df$type))
-cat("\nReddit - Top Authors:\n")
-print(head(sort(table(raw_df$author), decreasing = TRUE), 10))
-cat("\nReddit - Sample Content:\n")
-print(head(raw_df$body, 5))
-
-
+str(reddit_all)
+# youtube
+str(youtube_all)
 ```
 # Pre-Processing
 we have 2 separate data frames for reddit, and youtube, we need to merge them into one big one for the text analysis. We can add a column to indicate the source of each row and then bind them together.
 ```{r merge-data, echo=FALSE}
-# merge data frames by piping them so i dont lose my mind.
-reddit_df <- raw_df |> filter(type == "comment") |> select(author, body) |> mutate(source = "reddit")
-youtube_df <- youtube_all |> select(author, body) |> mutate(source = "youtube")
-combined_df <- bind_rows(reddit_df, youtube_df)
+# merge data frames by piping them so i dont lose my mind. keep like count for youtube, keep score for reddit.
+reddit_clean <- reddit_all |> select(author, body, score, subreddit) |> rename(source = subreddit)
+youtube_clean <- youtube_all |> select(author, body, like_count, channel) |> rename(score = like_count, source = channel)
+
+combined_data <- dplyr::bind_rows(reddit_clean, youtube_clean)
+
+# create unique id for each row
+combined_data <- combined_data |> mutate(id = row_number())
+
+# assign language
+combined_data$language <- cld2::detect_language(combined_data$body)
+head(cbind(table(combined_data$language)), 20) 
 ```
 Side note maybe we dont have to do all of them based on the quality of the data we get, but we should at least explain how we would do them and why they are important.
 
 ## Filtering & Cleaning
 ```{r data-cleaning, echo=TRUE}
-# We're gonna filter out weird characters, emojies, and other shit we dont use
+#remove non english comments
+combined_data <- combined_data |> filter(language == "en")
 
+#remove shit
+combined_data$body <- gsub("[^\x01-\x7F]", "", combined_data$body)
+
+#remove empty bodies
+combined_data <- combined_data |> filter(body != "")
 ```
 
+# Modeling
+
+## Corpus Creation
+```{r corpus-creation, echo=TRUE}
+corpus <- quanteda::corpus(combined_data, docid_field = "id", text_field = "body")
+
+summary(corpus, 10)
+
+as.character(corpus[ sample(length(corpus), 1) ])
+```
 ## Tokenization
 Explain how we tokenized the data and why.
 
