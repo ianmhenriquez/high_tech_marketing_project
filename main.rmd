@@ -17,7 +17,7 @@ local({r <- getOption("repos")
   options(repos = r)}
 )
 # Install the packages used in this workbook:
-packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr", "purrr", "quanteda", "sentimentr")
+packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr", "purrr", "quanteda", "sentimentr", "cld2", "seededlda", "textstem")
 for (i in packages) {
   if (!require(i, character.only = TRUE)) {
     install.packages(i, dependencies = TRUE)
@@ -41,6 +41,9 @@ library(stringr)
 library(purrr)
 library(quanteda)
 library(sentimentr)
+library(seededlda)
+library(cld2)
+library(textstem)
 
 env_file <- ".env"
 if (requireNamespace("knitr", quietly = TRUE)) {
@@ -347,7 +350,8 @@ str(youtube_all)
 we have 2 separate data frames for reddit, and youtube, we need to merge them into one big one for the text analysis. We can add a column to indicate the source of each row and then bind them together.
 ```{r merge-data, echo=FALSE}
 # merge data frames by piping them so i dont lose my mind. keep like count for youtube, keep score for reddit.
-reddit_clean <- reddit_all |> select(author, body, score, subreddit) |> rename(source = subreddit)
+reddit_clean <- reddit_all |> filter(type == "comment", !is.na(body), body != "[deleted]", body != "[removed]", nchar(trimws(body)) > 20) |> select(author, body, score, subreddit) |> rename(source = subreddit)
+
 youtube_clean <- youtube_all |> select(author, body, like_count, channel) |> rename(score = like_count, source = channel)
 
 combined_data <- dplyr::bind_rows(reddit_clean, youtube_clean)
@@ -358,6 +362,7 @@ combined_data <- combined_data |> mutate(id = row_number())
 # assign language
 combined_data$language <- cld2::detect_language(combined_data$body)
 head(cbind(table(combined_data$language)), 20) 
+
 ```
 Side note maybe we dont have to do all of them based on the quality of the data we get, but we should at least explain how we would do them and why they are important.
 
@@ -382,32 +387,252 @@ corpus <- quanteda::corpus(combined_data, docid_field = "id", text_field = "body
 summary(corpus, 10)
 
 as.character(corpus[ sample(length(corpus), 1) ])
+
+quanteda::docvars(corpus, field = "ave_sentiment") <- sentimentr::sentiment_by(sentimentr::get_sentences(corpus))$ave_sentiment
+
+hist(quanteda::docvars(corpus)$ave_sentiment)
+
+as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[1]), ])
+as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[6]), ])
 ```
 ## Tokenization
 Explain how we tokenized the data and why.
+```{r tokenization}
+tokens <- quanteda::tokens(corpus, 
+                           what = "word", # text unit to extract
+                           remove_punct = TRUE,
+                           remove_symbols = TRUE,
+                           remove_numbers = TRUE,
+                           remove_url = TRUE,
+                           remove_separators = TRUE,
+                           split_hyphens = FALSE,
+                           split_tags = FALSE,
+                           include_docvars = TRUE,
+                           padding = FALSE,
+                           verbose = TRUE)
+tokens[ sample(length(tokens), 1) ]
+
+tokens <- quanteda::tokens_tolower(tokens)
+```
 
 ## Stop Words Removal
-Explain how we removed stop words and why.
+```{r stop-words, echo=TRUE}
+quanteda::stopwords("en")
+custom_stops <- c(
+  "razr", "motorola", "phone", "just", "get", "like",
+  "one", "will", "can", "also", "even", "still", "want",
+  "moto", "device", "smartphone", "im", "dont", "ive", "thats", "got", "amp",
+  "u", "ur", "ok", "yeah", "lol", "gonna", "screen", "use", "good", "get", "make", "think", "need", "look", "come", "say"
+)
+tokens <- quanteda::tokens_remove(tokens, pattern = c(quanteda::stopwords("en"), custom_stops))
+```
 
 ## Stemming & Lemmatization
+```{r stemming, echo=TRUE}
+tokens <- quanteda::tokens_replace(tokens, pattern = quanteda::featnames(quanteda::dfm(tokens)),replacement = textstem::lemmatize_words(quanteda::featnames(quanteda::dfm(tokens)))
+)
+```
 
-## Frequency Filter
+## DFM Creation & Frequency Filtering
+```{r frequency-filter, echo=TRUE}
+dfm <- quanteda::dfm(tokens)
+
+dfm <- quanteda::dfm_select(dfm, pattern     = "^.{3,}$", valuetype   = "regex", selection   = "keep")
+
+dfm
+
+dfm <- dfm_trim(dfm, min_termfreq = 10)
+dfm
+
+topfeatures(dfm)
+
+length_features <- data.frame(count = quanteda::topfeatures(dfm, ncol(dfm))) # create data frame 
+length_features$length <- nchar(rownames(length_features)) # extract token length
+length_features[ which(length_features$length %in% c(1, 2)), ] # filter on token length
+
+dfm <- dfm[ -which((rowSums(dfm)) %in% 0), ]
+```
 
 ## Synonym consolidation
+```{r synonym-consolidation, echo=TRUE}
+# Add this chunk under ## Synonym consolidation
+# Simple flat vectors — pattern and replacement must be same length
+tokens <- quanteda::tokens_replace(tokens,
+  pattern = c(
+    # Form factor
+    "fold", "foldable", "folding",
+    "flip", "flipping",
+    # Camera
+    "cam", "cams",
+    # Battery
+    "charging", "charger",
+    # Display (already have "screen" as stop word — keep display as synonym)
+    "display", "displays",
+    # Hinge
+    "hinges", "hinging",
+    # Price
+    "pricing", "priced", "pricey", "expensive", "costly",
+    # Competitors
+    "galaxy",
+    "iphone", "ios", "apple"
+  ),
+  replacement = c(
+    # Form factor
+    "fold", "fold", "fold",
+    "flip", "flip",
+    # Camera
+    "camera", "camera",
+    # Battery
+    "charge", "charge",
+    # Display
+    "screen", "screen",
+    # Hinge
+    "hinge", "hinge",
+    # Price
+    "price", "price", "price", "price", "price",
+    # Competitors
+    "samsung",
+    "apple", "apple", "apple"
+  ),
+  valuetype = "fixed"
+)
+```
+##  LDA
+```{r topic-modeling, echo=TRUE}
 
-## Summary Statistics
+dtm <- quanteda::convert(dfm, to = "topicmodels")
 
-# Topic Modeling (LDA)
+# Split DTM into train/test for perplexity evaluation
+set.seed(42)
+n_docs      <- nrow(dtm)
+train_idx   <- sample(n_docs, floor(n_docs * 0.8))
+dtm_train   <- dtm[train_idx, ]
+dtm_test    <- dtm[-train_idx, ]
 
-## Build Document
+# Test k values from 2 to 15
+k_values <- 2:15
 
-## Optimal K
+perplexity_scores <- sapply(k_values, function(k) {
+  cat("Fitting k =", k, "\n")
+  m <- topicmodels::LDA(
+    dtm_train,
+    k       = k,
+    method  = "Gibbs",
+    control = list(seed = 42, iter = 1000, burnin = 200)
+  )
+  topicmodels::perplexity(m, newdata = dtm_test)  # evaluate on held-out test set
+})
 
-## Fit Model
+# Plot
+perplexity_df <- data.frame(k = k_values, perplexity = perplexity_scores)
 
-## Stability
+ggplot(perplexity_df, aes(x = k, y = perplexity)) +
+  geom_line(colour = "#2C7BB6") +
+  geom_point(colour = "#2C7BB6", size = 2) +
+  labs(title = "Held-out Perplexity by Number of Topics (k)",
+       subtitle = "Lower = better generalisation; choose the elbow",
+       x = "k", y = "Perplexity") +
+  theme_minimal()
 
+print(perplexity_df)
+
+K <- 7 # choose based on the plot.
+
+lda_model <- seededlda::textmodel_lda(dfm, k = K)
+
+# Then analyse sentiment per topic after the fact
+topic_assignments <- data.frame(
+  doc_id    = docnames(dfm),
+  topic     = topics(lda_model),
+  sentiment = docvars(dfm)$ave_sentiment
+)
+
+# Average sentiment per topic — this is your comparison
+topic_sentiment <- topic_assignments |>
+  group_by(topic) |>
+  summarise(mean_sentiment = mean(sentiment, na.rm = TRUE),
+            n = n())
+
+# Visualize sentiment distribution across topics.
+ggplot(topic_sentiment, aes(x = factor(topic), y = mean_sentiment)) +
+  geom_bar(stat = "identity", fill = "#2C7BB6") +
+  labs(title = "Average Sentiment by Topic",
+        x = "Topic", y = "Average Sentiment") +
+  theme_minimal()
+  
+# You can also look at the distribution of sentiment within each topic:
+ggplot(topic_assignments, aes(x = factor(topic), y = sentiment)) +
+  geom_boxplot(fill = "#2C7BB6") +
+  labs(title = "Sentiment Distribution by Topic",
+        x = "Topic", y = "Sentiment") +
+  theme_minimal()
+```
+
+## Improving the model
+```{r improving-model, echo=TRUE}
+
+```
+
+## Stability Analysis
+```{r stability-analysis, echo=TRUE}
+seeds <- c(42L, 123L, 999L)
+
+stability_results <- lapply(seeds, function(s) {
+  set.seed(s)
+  m     <- seededlda::textmodel_lda(dfm, k = K)
+  terms <- seededlda::terms(m, 5)  # matrix: 5 rows (words) x K cols (topics)
+  # Collapse each topic's top 5 words into one string per topic
+  apply(terms, 2, paste, collapse = ", ")  # returns named vector of length K
+})
+
+# Each result is a named vector of length K — bind into a clean table
+stability_df <- data.frame(
+  topic    = paste0("Topic ", 1:K),
+  seed_42  = stability_results[[1]],
+  seed_123 = stability_results[[2]],
+  seed_999 = stability_results[[3]],
+  row.names = NULL
+)
+
+knitr::kable(stability_df,
+             col.names = c("Topic", "Seed 42", "Seed 123", "Seed 999"),
+             caption   = "Top 5 words per topic across 3 seeds (stability check)")
+
+```
 # Results
+```{r results, echo=TRUE}
+# Show top 10 words per topic with your human-readable label
+topic_terms <- seededlda::terms(lda_model, 10)
+knitr::kable(topic_terms, caption = "Top 10 terms per topic")
+
+# TODO: label each topic based on dominant terms, e.g.:
+# topic1 = "Price & Value", topic2 = "Camera Quality", etc.
+
+topic_counts <- as.data.frame(table(topics(lda_model))) |>
+  rename(topic = Var1, n = Freq) |>
+  mutate(prop = n / sum(n))
+
+ggplot(topic_counts, aes(x = reorder(topic, prop), y = prop)) +
+  geom_col(fill = "#2C7BB6") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Topic Prominence",
+       x = NULL, y = "Proportion of documents") +
+  theme_minimal()
+
+  # Merge topic assignments back with source info
+topic_source <- topic_assignments |>
+  mutate(doc_id = as.integer(doc_id)) |>
+  left_join(combined_data |> select(id, source), 
+            by = c("doc_id" = "id"))
+
+contingency <- table(topic_source$topic, topic_source$source)
+knitr::kable(contingency, caption = "Topic distribution by source")
+
+chi_result <- chisq.test(contingency)
+print(chi_result)
+# Interpret: p < 0.05 means Reddit and YouTube discuss different topics
+```
 
 ## Topic Word Distributions
 
