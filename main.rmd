@@ -63,18 +63,28 @@ if (file.exists(env_file)) {
 ```
 
 # Introduction
-Explain shit here philippe 8=====D
+
+Explain shit here philippe 8=====D OHMAGHADIMBOUTTABUUUUSSSTTTTT
 
 # Sample Selection
-We decided to go with mulitiple sources of text in an attempt to capture multiple perspectives on the Razr and avoid pigeon hollling into one corner of the internet which may have skewed results. 
+
+We decided to go with mulitiple sources of text in an attempt to capture
+multiple perspectives on the Razr and avoid pigeon hollling into one
+corner of the internet which may have skewed results.
 
 ## Data Sources
-We grabbed our shit from Reddit threads about the Motorola Razr 2025 (pain in my ass) and Youtube comments from popular tech youtubers who reviewed the Razr 2025
+
+We grabbed our shit from Reddit threads about the Motorola Razr 2025
+(pain in my ass) and Youtube comments from popular tech youtubers who
+reviewed the Razr 2025
 
 ## Sampling representation & Bias
-Explain if the sample is representative of all customers, and how platform choice may skew results e.g Reddit chuds are not normal people.
+
+Explain if the sample is representative of all customers, and how
+platform choice may skew results e.g Reddit chuds are not normal people.
 
 # Data Collection
+
 ```{r reddit-fetch, echo=TRUE}
 fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
   api_url <- paste0(thread_url, ".json?limit=", limit)
@@ -338,16 +348,25 @@ if (file.exists("data/youtube_comments.csv")) {
 cat("YouTube comments collected:", nrow(youtube_all), "\n")
 print(table(youtube_all$channel))
 ```
+
 # Exploration
-Lets have a gander at the data we collected and see if theres any thing fun before we clean it up. 
+
+Lets have a gander at the data we collected and see if theres any thing
+fun before we clean it up.
+
 ```{r exploration, echo=TRUE}
 # reddit 
 str(reddit_all)
 # youtube
 str(youtube_all)
 ```
+
 # Pre-Processing
-we have 2 separate data frames for reddit, and youtube, we need to merge them into one big one for the text analysis. We can add a column to indicate the source of each row and then bind them together.
+
+we have 2 separate data frames for reddit, and youtube, we need to merge
+them into one big one for the text analysis. We can add a column to
+indicate the source of each row and then bind them together.
+
 ```{r merge-data, echo=FALSE}
 # merge data frames by piping them so i dont lose my mind. keep like count for youtube, keep score for reddit.
 reddit_clean <- reddit_all |> filter(type == "comment", !is.na(body), body != "[deleted]", body != "[removed]", nchar(trimws(body)) > 20) |> select(author, body, score, subreddit) |> rename(source = subreddit)
@@ -369,9 +388,13 @@ combined_data$language <- cld2::detect_language(combined_data$body)
 head(cbind(table(combined_data$language)), 20) 
 
 ```
-Side note maybe we dont have to do all of them based on the quality of the data we get, but we should at least explain how we would do them and why they are important.
+
+Side note maybe we dont have to do all of them based on the quality of
+the data we get, but we should at least explain how we would do them and
+why they are important.
 
 ## Filtering & Cleaning
+
 ```{r data-cleaning, echo=TRUE}
 #remove non english comments
 combined_data <- combined_data |> filter(language == "en")
@@ -386,6 +409,7 @@ combined_data <- combined_data |> filter(body != "")
 # Modeling
 
 ## Corpus Creation
+
 ```{r corpus-creation, echo=TRUE}
 corpus <- quanteda::corpus(combined_data, docid_field = "id", text_field = "body")
 
@@ -400,8 +424,11 @@ hist(quanteda::docvars(corpus)$ave_sentiment)
 as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[1]), ])
 as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[6]), ])
 ```
+
 ## Tokenization
+
 Explain how we tokenized the data and why.
+
 ```{r tokenization}
 tokens <- quanteda::tokens(corpus, 
                            what = "word", # text unit to extract
@@ -421,6 +448,7 @@ tokens <- quanteda::tokens_tolower(tokens)
 ```
 
 ## Stop Words Removal
+
 ```{r stop-words, echo=TRUE}
 quanteda::stopwords("en")
 custom_stops <- c(
@@ -433,12 +461,14 @@ tokens <- quanteda::tokens_remove(tokens, pattern = c(quanteda::stopwords("en"),
 ```
 
 ## Stemming & Lemmatization
+
 ```{r stemming, echo=TRUE}
 tokens <- quanteda::tokens_replace(tokens, pattern = quanteda::featnames(quanteda::dfm(tokens)),replacement = textstem::lemmatize_words(quanteda::featnames(quanteda::dfm(tokens)))
 )
 ```
 
 ## DFM Creation & Frequency Filtering
+
 ```{r frequency-filter, echo=TRUE}
 dfm <- quanteda::dfm(tokens)
 
@@ -459,6 +489,7 @@ dfm <- dfm[ -which((rowSums(dfm)) %in% 0), ]
 ```
 
 ## Synonym consolidation
+
 ```{r synonym-consolidation, echo=TRUE}
 # Add this chunk under ## Synonym consolidation
 # Simple flat vectors — pattern and replacement must be same length
@@ -502,7 +533,9 @@ tokens <- quanteda::tokens_replace(tokens,
   valuetype = "fixed"
 )
 ```
-##  LDA
+
+## LDA
+
 ```{r topic-modeling, echo=TRUE}
 
 dtm <- quanteda::convert(dfm, to = "topicmodels")
@@ -574,11 +607,13 @@ ggplot(topic_assignments, aes(x = factor(topic), y = sentiment)) +
 ```
 
 ## Improving the model
+
 ```{r improving-model, echo=TRUE}
 
 ```
 
 ## Stability Analysis
+
 ```{r stability-analysis, echo=TRUE}
 seeds <- c(42L, 123L, 999L)
 
@@ -604,7 +639,9 @@ knitr::kable(stability_df,
              caption   = "Top 5 words per topic across 3 seeds (stability check)")
 
 ```
+
 # Results
+
 ```{r results, echo=TRUE}
 # Show top 10 words per topic with your human-readable label
 topic_terms <- seededlda::terms(lda_model, 10)
