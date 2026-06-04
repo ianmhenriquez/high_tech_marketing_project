@@ -73,26 +73,54 @@ if (file.exists(env_file)) {
 
 # Introduction
 
-Explain shit here philippe 8=====D OHMAGHADIMBOUTTABUUUUSSSTTTTT
+Technology fanatics on the internet have been known to be quite vocal of
+their opinions, this usually takes shape when new smartphone's, gaming
+consoles, or computers and their components are released. These vocal
+opinions have especially been the case for foldable smartphones, wherein
+the new Motorola RAZR's have been notable. Being a revival of the old
+flip phone model, many individuals could have an emotional attachment to
+the model and as such verbally share their thoughts on the new phone's.
 
 # Sample Selection
 
-We decided to go with mulitiple sources of text in an attempt to capture
-multiple perspectives on the Razr and avoid pigeon hollling into one
-corner of the internet which may have skewed results.
+This report shall be conducting a text analysis to gauge the consumer
+sentiment of the new RAZR. In order to ensure that various diverse
+perspectives are considered for the sentiment surrounding the RAZR
+revival multiple sources of texts have been captured. This prevents the
+risk of an echo-chamber like environment of impacting the data collected
+and ultimately skewing the analysis results.
 
 ## Data Sources
 
-We grabbed our shit from Reddit threads about the Motorola Razr 2025
-(pain in my ass) and Youtube comments from popular tech youtubers who
-reviewed the Razr 2025
+The data used for the analysis have been gathered from two technology
+dominant environments on the internet: Reddit and YouTube. From Reddit
+threads which include the "Motorola Razr 2025" query was used under the
+notion that it looks at threads which discuss the 2025 RAZR. Then for
+YouTube comments were gathered from well known tech content creators
+(such as Marques Brownlee) who reviewed the 2025 RAZR.
 
 ## Sampling representation & Bias
 
-Explain if the sample is representative of all customers, and how
-platform choice may skew results e.g Reddit chuds are not normal people.
+It must be acknowledged that there is a risk of an inherent bias being
+introduced by choosing to look at both these specific platforms, and
+user base. Of the large population of individuals who own smartphone's
+many are not active on Reddit and even with regards to YouTube which
+does have a larger install base, many are still not actively interacting
+(posting or commenting). Individuals who are passionate or involved
+enough to do either of the aforementioned actions could also be far more
+critical than the average consumer. Though the case may also be made
+that it is these exact tech fanatics who are active with the newest
+technologies who would be the consumers for such a commodity as a
+folding smartphone.
 
 # Data Collection
+
+Using the code chunk below Reddit is scraped for data which includes
+certain key words which aid in the gathering of posts as well as
+comments relating to the RAZR foldable. Key words such as "Android" and
+"Motorola" are also crucial in ensuring that the data doesn't contain
+either products from other companies which may also be called close to
+RAZR (e.g. scooters) or even literal razors.
 
 ```{r reddit-fetch, echo=TRUE}
 fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
@@ -252,6 +280,13 @@ cat("Posts vs comments:\n");  print(table(reddit_all$type))
 cat("By subreddit:\n");       print(table(reddit_all$subreddit))
 ```
 
+The same is done for YouTube in the code chunk below. Though it is
+somewhat simpler, given that unlike Reddit where a plethora of posts and
+comments must be scraped individually, on YouTube only comments for
+specific known video's are observed. The selected video's themselves
+correspond with content creators who have a reputation for being
+trustworthy with unbiased reviews.
+
 ```{r youtube-fetch, echo=TRUE}
 fetch_youtube_comments <- function(video_id, max_comments = 400, api_key = Sys.getenv("YOUTUBE_KEY")) {
   if (identical(api_key, "")) {
@@ -337,8 +372,12 @@ print(table(youtube_all$channel))
 
 # Exploration
 
-Lets have a gander at the data we collected and see if theres any thing
-fun before we clean it up.
+With the initial scraping completed, attention may now be given to the
+raw data which has been collected. While it may not yet provide any
+useful conclusions, it can already provide some insight on the split
+between the collected data. While there is a discrepancy between the raw
+corpus volumes, it is not a magnitude which would be of concern in our
+view.
 
 ```{r exploration, echo=TRUE}
 exploration_summary <- tibble::tibble(
@@ -353,9 +392,14 @@ knitr::kable(exploration_summary, caption = "Raw corpus volume by source")
 
 # Pre-Processing
 
-we have 2 separate data frames for reddit, and youtube, we need to merge
-them into one big one for the text analysis. We can add a column to
-indicate the source of each row and then bind them together.
+As was mentioned previously, the data currently exists in two separate
+data frames; the Reddit and YouTube data. In the code chunk below these
+two are merged to create one large database to be used for further text
+analyses. In order to still maintain some tractability between the data
+a new column shall be added to indicate which source the data was
+collected from and then binding them together. Furthermore an overview
+may be provided for the languages comments are left in, which shall be
+filtered and removed accordingly later on.
 
 ```{r merge-data, echo=FALSE}
 # Reddit: keep only real comments, drop deleted/removed and very short text.
@@ -390,7 +434,14 @@ Side note maybe we dont have to do all of them based on the quality of
 the data we get, but we should at least explain how we would do them and
 why they are important.
 
+I suppose, you got that tho twin \<3
+
 ## Filtering & Cleaning
+
+The data may now be filtered by various means. From maintaining only
+data in English, removing empty data points, to removing non-ASCII
+characters, the data balanced is slightly shifted but not to concerning
+bounds.
 
 ```{r data-cleaning, echo=TRUE}
 # Keep English only
@@ -419,6 +470,9 @@ print(table(combined_data$platform))
 ```
 
 # Modeling
+
+With the collected data now filtered and cleaned up, work may be done on
+the actual modelling of the text analysis.
 
 ## Corpus Creation
 
@@ -460,6 +514,11 @@ tokens <- quanteda::tokens_tolower(tokens)
 
 ## Synonym consolidation
 
+Now the tokens are also consolidated based on if they are synonyms of
+other collected words. This aids in getting a clearer consensus of the
+items which really matter for the consumers, since a camera is just
+important as a cam.
+
 ```{r synonym-consolidation, echo=TRUE}
 tokens <- quanteda::tokens_replace(tokens,
   pattern = c(
@@ -488,6 +547,12 @@ tokens <- quanteda::tokens_replace(tokens,
 ```
 
 ## Stop Words Removal
+
+The data still includes a plethora of words which work to provide
+structure to sentences, but in the context of data modelling serve
+little to no purpose. These stop words are removed accordingly, as well
+as certain key words which were required to obtain the data specifically
+relating to the Motorola RAZR but serve little purpose now as well.
 
 ```{r stop-words, echo=TRUE}
 custom_stops <- c(
@@ -536,7 +601,8 @@ if (length(empty_docs) > 0) dfm <- dfm[-empty_docs, ]
 cat("\nFinal DFM:", ndoc(dfm), "documents x", nfeat(dfm), "features\n")
 ```
 
-## Selecting K 
+## Selecting K
+
 ```{r selecting-k, echo=TRUE}
 dtm <- quanteda::convert(dfm, to = "topicmodels")
 
@@ -612,7 +678,18 @@ knitr::kable(stability_df,
 
 # Results
 
+Having completed the modelling analyses, the results may now be
+highlighted. From the individual words or topics, towards their relation
+to overall consumer sentiment, the results shall show valuable insights
+on just how the posters feel towards the revived RAZR.
+
 ## Topic Labels
+
+Firstly seven various topics may be created and assigned with terms
+which relate closely to said topics. The code chunk below highlights the
+topics themselves as well as the top 10 most frequent terms which appear
+per topic.
+
 ```{r topic-labels, echo=TRUE}
 # Top 10 terms per topic
 topic_terms <- seededlda::terms(lda_model, 10)
@@ -631,6 +708,14 @@ topic_labels <- c(
 ```
 
 ## Topic Word Distributions
+
+Continuing with the seven topics the distribution of the top ten terms
+may now be shown. Rather than just showing them in a ranked order one
+may now also see just how important the various terms are for the
+posters. As one might expect the code chunk below shows that a great
+point of importance for the consumers for the foldable phone is the
+screen, fold, and flip.
+
 ```{r topic-word-dist, echo=TRUE, fig.height=7}
 # Extract per-topic word probabilities
 phi <- lda_model$phi
@@ -656,6 +741,16 @@ ggplot(beta_df,
 
 ## Topic Prominence
 
+Sticking with the seven topics, they are now cross-referenced to each
+other. This will aid in showing just how important each of these topics
+themselves are to the consumers, at least in how prominently they're
+mentioned. The code chunk below shows that the most prominent topic is
+for "Apps & Functionality", with the least prominent one being the
+"Software & Support". This is interesting in showing that the actual
+functioning of the device is a greater point of discussion, which would
+make sense given the RAZR would simply run a variant of well established
+Android OS.
+
 ```{r topic-prominence, echo=TRUE}
 topic_counts <- as.data.frame(table(topics(lda_model))) |>
   rename(topic = Var1, n = Freq) |>
@@ -676,6 +771,8 @@ knitr::kable(topic_counts |> select(label, n, prop),
 ```
 
 ## Sentiment by Topic
+
+A
 
 ```{r sentiment-by-topic, echo=TRUE}
 topic_sentiment <- topic_assignments |>
@@ -702,7 +799,21 @@ ggplot(topic_assignments |> mutate(label = topic_labels[topic]),
 
 ## Statistical Tests
 
+Through much of the data collecting and filtering brief mentions were
+given on the data split between Reddit and YouTube. These were primarily
+numerical, but how does their data differ inherently? That is what will
+be explored below statistically.
+
 ### Do Reddit and YouTube discuss different topics?
+
+With Reddit and YouTube having inherently different user bases, one
+would assume that their topics of prominence would also differ. The code
+chunk below serves to illustrate that Reddit is far more interested in
+software and its comparison to competitors, while YouTube users focus
+much more on physical aspects such as build quality and hardware
+specifications. This could be as a result that Reddit is often used for
+software support, whereas YouTube is used for real world tutorials.
+
 ```{r test-chisq, echo=TRUE}
 topic_source <- topic_assignments |>
   mutate(doc_id = as.integer(doc_id)) |>
@@ -717,8 +828,8 @@ chi_result <- chisq.test(contingency)
 print(chi_result)
 ```
 
-
 ### Does sentiment differ across topics?
+
 ```{r test-kruskal, echo=TRUE}
 kw_result <- kruskal.test(sentiment ~ factor(topic), data = topic_assignments)
 print(kw_result)
@@ -730,6 +841,7 @@ print(pw)
 ```
 
 ### Old vs New Era: does sentiment differ?
+
 ```{r test-era, echo=TRUE}
 era_sentiment <- topic_source |>
   filter(!is.na(era))
@@ -755,6 +867,14 @@ era_sentiment |>
 ```
 
 ## Customer Value Triad
+
+To conclude, attention is given to the 'customer value triad' (quality,
+price, service), and what their share is of the corpus. What the chunk
+below shows is two major conclusions: the quality aspect easily
+dominates the corpus, and the service aspect is completely neglected.
+This may also speak to the appeal of either the RAZR or Motorola as a
+whole, and what is either of importance or relevance to their consumers.
+
 ```{r value-triad, echo=TRUE}
 triad_map <- data.frame(
   topic = paste0("topic", 1:7),
