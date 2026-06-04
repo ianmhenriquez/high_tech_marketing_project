@@ -10,14 +10,20 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-#setup packages and stuff, include false so it doesn't show up.
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = "center", fig.width = 7, fig.height = 4)
+
 # Set the CRAN mirror:
 local({r <- getOption("repos")
   r["CRAN"] <- "https://cran.rstudio.com/"
   options(repos = r)}
 )
+
 # Install the packages used in this workbook:
-packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr", "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr", "purrr", "quanteda", "sentimentr", "cld2", "seededlda", "textstem")
+packages <- c("RedditExtractoR", "httr", "jsonlite", "tidytext", "dplyr",
+              "ggplot2", "wordcloud", "topicmodels", "LDAvis", "stringr",
+              "purrr", "quanteda", "sentimentr", "cld2", "seededlda",
+              "textstem", "tidyr", "scales", "tibble")
 for (i in packages) {
   if (!require(i, character.only = TRUE)) {
     install.packages(i, dependencies = TRUE)
@@ -27,7 +33,7 @@ for (i in packages) {
   }
 }
 
-#load the libraries
+# load the libraries
 library(RedditExtractoR)
 library(httr)
 library(jsonlite)
@@ -44,6 +50,9 @@ library(sentimentr)
 library(seededlda)
 library(cld2)
 library(textstem)
+library(tidyr)
+library(scales)
+library(tibble)
 
 env_file <- ".env"
 if (requireNamespace("knitr", quietly = TRUE)) {
@@ -124,8 +133,8 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
           parent_id = comment$parent_id %||% NA_character_,
           author    = comment$author    %||% NA_character_,
           body      = body_text,
-          score     = comment$score     %||% NA_real_,      # keep score for segmentation
-          subreddit = comment$subreddit %||% NA_character_, # keep subreddit for segmentation
+          score     = comment$score     %||% NA_real_,
+          subreddit = comment$subreddit %||% NA_character_,
           stringsAsFactors = FALSE
         )
         replies <- if (is.list(comment$replies) &&
@@ -175,7 +184,7 @@ fetch_reddit_thread <- function(thread_url, limit = 500, attempts = 5) {
 }
 
 suppressWarnings({
-  reddit_cache <- "data/reddit_content.csv" 
+  reddit_cache <- "data/reddit_content.csv"
   cached <- file.exists(reddit_cache)
 
   if (cached) {
@@ -183,8 +192,7 @@ suppressWarnings({
       read.csv(reddit_cache, stringsAsFactors = FALSE),
       error = function(e) { message("Cache read failed: ", conditionMessage(e)); data.frame() }
     )
-  }
-  else {
+  } else {
     search_config <- list(
       list(sub = "Android",       kw = "motorola razr"),
       list(sub = "Android",       kw = "razr 2025"),
@@ -202,24 +210,19 @@ suppressWarnings({
     )
 
     reddit_posts <- dplyr::bind_rows(Filter(
-      function(x) is.data.frame(x) && nrow(x) > 0,   # add this Filter wrapper
+      function(x) is.data.frame(x) && nrow(x) > 0,
       lapply(search_config, function(cfg) {
         result <- tryCatch({
           Sys.sleep(2)
           find_thread_urls(keywords = cfg$kw, subreddit = cfg$sub, sort_by = "top")
         }, error = function(e) {
           message("Failed r/", cfg$sub, " / '", cfg$kw, "': ", conditionMessage(e))
-          data.frame(url = character())  # always return a data frame, never NULL
+          data.frame(url = character())
         })
-        cat("r/", cfg$sub, "/ '", cfg$kw, "' ->", 
-            if (is.data.frame(result)) nrow(result) else "ERROR", "threads\n")
-        # Ensure we always return a data frame regardless of what find_thread_urls gives back
         if (!is.data.frame(result)) return(data.frame(url = character()))
         result
       })
     )) |> dplyr::distinct(url, .keep_all = TRUE)
-
-    cat("Total unique threads:", nrow(reddit_posts), "\n")
 
     reddit_max_threads <- 250
 
@@ -227,13 +230,9 @@ suppressWarnings({
       to_fetch <- head(reddit_posts$url, reddit_max_threads)
       raw_list <- lapply(seq_along(to_fetch), function(i) {
         Sys.sleep(1)
-        message("Thread ", i, "/", length(to_fetch))
         tryCatch(
           fetch_reddit_thread(to_fetch[i]),
-          error = function(e) {
-            message("Failed: ", conditionMessage(e))
-            data.frame()
-          }
+          error = function(e) { message("Failed: ", conditionMessage(e)); data.frame() }
         )
       })
       reddit_all <- dplyr::bind_rows(
@@ -243,15 +242,14 @@ suppressWarnings({
       reddit_all <- data.frame()
     }
 
-    write.csv(reddit_all, reddit_cache, row.names = FALSE) 
+    if (!dir.exists("data")) dir.create("data")
+    write.csv(reddit_all, reddit_cache, row.names = FALSE)
   }
 })
 
-cat("Total rows:", nrow(reddit_all), "\n")
-cat("Posts vs comments:\n")
-print(table(reddit_all$type))
-cat("By subreddit:\n")
-print(table(reddit_all$subreddit))
+cat("Reddit total rows:", nrow(reddit_all), "\n")
+cat("Posts vs comments:\n");  print(table(reddit_all$type))
+cat("By subreddit:\n");       print(table(reddit_all$subreddit))
 ```
 
 ```{r youtube-fetch, echo=TRUE}
@@ -267,27 +265,20 @@ fetch_youtube_comments <- function(video_id, max_comments = 400, api_key = Sys.g
     query <- list(
       part       = "snippet",
       videoId    = video_id,
-      maxResults = 200,
+      maxResults = 100,
       textFormat = "plainText",
       key        = api_key
     )
+    if (!is.null(page_token)) query$pageToken <- page_token
 
-    # Add pagination token if we have one
-    if (!is.null(page_token)) {
-      query$pageToken <- page_token
-    }
-
-    resp <- httr::GET(
-      "https://www.googleapis.com/youtube/v3/commentThreads",
-      query = query
-    )
+    resp <- httr::GET("https://www.googleapis.com/youtube/v3/commentThreads",
+                      query = query)
 
     if (httr::http_error(resp)) {
-      error_body <- tryCatch(
-        httr::content(resp, as = "text", encoding = "UTF-8"),
-        error = function(e) ""
-      )
-      message("YouTube API error: ", httr::status_code(resp), if (nzchar(error_body)) paste0(" - ", error_body) else "")
+      error_body <- tryCatch(httr::content(resp, as = "text", encoding = "UTF-8"),
+                             error = function(e) "")
+      message("YouTube API error: ", httr::status_code(resp),
+              if (nzchar(error_body)) paste0(" - ", error_body) else "")
       break
     }
 
@@ -296,33 +287,29 @@ fetch_youtube_comments <- function(video_id, max_comments = 400, api_key = Sys.g
       flatten = TRUE
     )
 
-    # Extract top-level comments
     items <- parsed$items
-
     if (is.null(items) || nrow(items) == 0) break
 
     batch <- data.frame(
-      comment_id    = items$id,
-      author        = items$snippet.topLevelComment.snippet.authorDisplayName,
-      body          = items$snippet.topLevelComment.snippet.textDisplay,
+      comment_id = items$id,
+      author     = items$snippet.topLevelComment.snippet.authorDisplayName,
+      body       = items$snippet.topLevelComment.snippet.textDisplay,
+      like_count = items$snippet.topLevelComment.snippet.likeCount,  # kept for segmentation
       stringsAsFactors = FALSE
     )
 
     all_comments[[length(all_comments) + 1]] <- batch
     collected <- sum(sapply(all_comments, nrow))
-    message("Collected: ", collected, " comments")
 
-    # Check for next page
     page_token <- parsed$nextPageToken
-
     if (is.null(page_token) || collected >= max_comments) break
-
     Sys.sleep(0.5)
   }
 
   if (length(all_comments) == 0) return(data.frame())
-  dplyr::bind_rows(all_comments) |> dplyr::mutate(source = "youtube");
+  dplyr::bind_rows(all_comments) |> dplyr::mutate(source = "youtube")
 }
+
 razr_videos <- list(
   mkbhd      = "8om1eJrO2lU",   # MKBHD Razr 2025 review
   dave2d     = "JTT67FSc8j8",   # ShortCircuit review
@@ -330,7 +317,6 @@ razr_videos <- list(
   phonearena = "b3Ijuf7DHcQ"    # PhoneArena review
 )
 
-# to save on api calls, we check if we have a local csv of comments already, if not we fetch and save for next time.
 if (file.exists("data/youtube_comments.csv")) {
   youtube_all <- read.csv("data/youtube_comments.csv", stringsAsFactors = FALSE)
   cat("Loaded YouTube comments from CSV:", nrow(youtube_all), "\n")
@@ -338,11 +324,11 @@ if (file.exists("data/youtube_comments.csv")) {
   youtube_all <- purrr::map2_dfr(
     razr_videos,
     names(razr_videos),
-  ~   fetch_youtube_comments(.x, max_comments = 400) %>%
+    ~ fetch_youtube_comments(.x, max_comments = 400) |>
         dplyr::mutate(channel = .y)
   )
-  # Save to CSV for future runs
-  write.csv(youtube_all, "data/youtube_comments.csv", row.names = FALSE);
+  if (!dir.exists("data")) dir.create("data")
+  write.csv(youtube_all, "data/youtube_comments.csv", row.names = FALSE)
 }
 
 cat("YouTube comments collected:", nrow(youtube_all), "\n")
@@ -355,10 +341,14 @@ Lets have a gander at the data we collected and see if theres any thing
 fun before we clean it up.
 
 ```{r exploration, echo=TRUE}
-# reddit 
-str(reddit_all)
-# youtube
-str(youtube_all)
+exploration_summary <- tibble::tibble(
+  Source    = c("Reddit (comments only)", "YouTube"),
+  Documents = c(sum(reddit_all$type == "comment", na.rm = TRUE),
+                nrow(youtube_all)),
+  Avg_chars = c(round(mean(nchar(reddit_all$body[reddit_all$type == "comment"]), na.rm = TRUE), 1),
+                round(mean(nchar(youtube_all$body), na.rm = TRUE), 1))
+)
+knitr::kable(exploration_summary, caption = "Raw corpus volume by source")
 ```
 
 # Pre-Processing
@@ -368,24 +358,31 @@ them into one big one for the text analysis. We can add a column to
 indicate the source of each row and then bind them together.
 
 ```{r merge-data, echo=FALSE}
-# merge data frames by piping them so i dont lose my mind. keep like count for youtube, keep score for reddit.
-reddit_clean <- reddit_all |> filter(type == "comment", !is.na(body), body != "[deleted]", body != "[removed]", nchar(trimws(body)) > 20) |> select(author, body, score, subreddit) |> rename(source = subreddit)
+# Reddit: keep only real comments, drop deleted/removed and very short text.
+reddit_clean <- reddit_all |>
+  filter(type == "comment", !is.na(body),
+         body != "[deleted]", body != "[removed]",
+         nchar(trimws(body)) > 20) |>
+  select(author, body, score, subreddit) |>
+  rename(source = subreddit)
 
+# YouTube: use like_count as the engagement score, channel as the source.
 youtube_clean <- youtube_all |>
-  mutate(
-    score = if ("like_count" %in% names(youtube_all)) youtube_all$like_count else NA_real_,
-    source = channel
-  ) |>
+  mutate(score  = if ("like_count" %in% names(youtube_all)) like_count else NA_real_,
+         source = channel) |>
   select(author, body, score, source)
 
-combined_data <- dplyr::bind_rows(reddit_clean, youtube_clean)
+combined_data <- dplyr::bind_rows(reddit_clean, youtube_clean) |>
+  mutate(id = row_number())
 
-# create unique id for each row
-combined_data <- combined_data |> mutate(id = row_number())
+# Platform label (Reddit vs YouTube) for clean between-group tests later.
+yt_channels <- c("mkbhd", "dave2d", "mrmobile", "phonearena")
+combined_data <- combined_data |>
+  mutate(platform = ifelse(source %in% yt_channels, "YouTube", "Reddit"))
 
-# assign language
+# Language detection
 combined_data$language <- cld2::detect_language(combined_data$body)
-head(cbind(table(combined_data$language)), 20) 
+print(table(combined_data$language))
 
 ```
 
@@ -396,14 +393,29 @@ why they are important.
 ## Filtering & Cleaning
 
 ```{r data-cleaning, echo=TRUE}
-#remove non english comments
+# Keep English only
 combined_data <- combined_data |> filter(language == "en")
 
-#remove shit
+# Strip non-ASCII characters
 combined_data$body <- gsub("[^\x01-\x7F]", "", combined_data$body)
 
-#remove empty bodies
+# Remove now-empty bodies
 combined_data <- combined_data |> filter(body != "")
+
+# Old vs. New era 
+# Flag documents that reference the original
+old_terms <- c("original", "old razr", "2004", "2005", "v3",
+               "flip phone days", "back in the day", "nostalgia",
+               "first razr", "classic", "used to have", "the old one")
+combined_data <- combined_data |>
+  mutate(era = ifelse(
+    grepl(paste(old_terms, collapse = "|"), body, ignore.case = TRUE),
+    "references_old", "new_only"))
+
+cat("Era distribution (old-brand references vs new-only):\n")
+print(table(combined_data$era))
+cat("\nDocuments by platform:\n")
+print(table(combined_data$platform))
 ```
 
 # Modeling
@@ -413,16 +425,16 @@ combined_data <- combined_data |> filter(body != "")
 ```{r corpus-creation, echo=TRUE}
 corpus <- quanteda::corpus(combined_data, docid_field = "id", text_field = "body")
 
-summary(corpus, 10)
+quanteda::docvars(corpus, field = "ave_sentiment") <-
+  sentimentr::sentiment_by(sentimentr::get_sentences(corpus))$ave_sentiment
 
-as.character(corpus[ sample(length(corpus), 1) ])
-
-quanteda::docvars(corpus, field = "ave_sentiment") <- sentimentr::sentiment_by(sentimentr::get_sentences(corpus))$ave_sentiment
-
-hist(quanteda::docvars(corpus)$ave_sentiment)
-
-as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[1]), ])
-as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(quanteda::docvars(corpus)$ave_sentiment)[6]), ])
+# Distribution of sentiment across the corpus
+ggplot(data.frame(s = quanteda::docvars(corpus)$ave_sentiment),
+       aes(x = s)) +
+  geom_histogram(bins = 30, fill = "#2C7BB6") +
+  labs(title = "Distribution of document sentiment",
+       x = "Average sentiment", y = "Count") +
+  theme_minimal()
 ```
 
 ## Tokenization
@@ -430,8 +442,8 @@ as.character(corpus[ which(quanteda::docvars(corpus)$ave_sentiment == summary(qu
 Explain how we tokenized the data and why.
 
 ```{r tokenization}
-tokens <- quanteda::tokens(corpus, 
-                           what = "word", # text unit to extract
+tokens <- quanteda::tokens(corpus,
+                           what = "word",
                            remove_punct = TRUE,
                            remove_symbols = TRUE,
                            remove_numbers = TRUE,
@@ -441,30 +453,64 @@ tokens <- quanteda::tokens(corpus,
                            split_tags = FALSE,
                            include_docvars = TRUE,
                            padding = FALSE,
-                           verbose = TRUE)
-tokens[ sample(length(tokens), 1) ]
+                           verbose = FALSE)
 
 tokens <- quanteda::tokens_tolower(tokens)
+```
+
+## Synonym consolidation
+
+```{r synonym-consolidation, echo=TRUE}
+tokens <- quanteda::tokens_replace(tokens,
+  pattern = c(
+    "foldable", "folding",
+    "flipping",
+    "cam", "cams",
+    "charging", "charger",
+    "displays",
+    "hinges", "hinging",
+    "pricing", "priced", "pricey", "expensive", "costly",
+    "galaxy",
+    "ios", "apple"
+  ),
+  replacement = c(
+    "fold", "fold",
+    "flip",
+    "camera", "camera",
+    "charge", "charge",
+    "display",
+    "hinge", "hinge",
+    "price", "price", "price", "price", "price",
+    "samsung",
+    "apple", "apple"
+  ),
+  valuetype = "fixed")
 ```
 
 ## Stop Words Removal
 
 ```{r stop-words, echo=TRUE}
-quanteda::stopwords("en")
 custom_stops <- c(
-  "razr", "motorola", "phone", "just", "get", "like", "thing", "really", "know", "time", "people", "would", "also", "much", "use", "see",
-  "one", "will", "can", "also", "even", "still", "want", "review",
-  "moto", "device", "smartphone", "im", "dont", "ive", "thats", "got", "amp",
-  "u", "ur", "ok", "yeah", "lol", "gonna", "screen", "use", "good", "get", "make", "think", "need", "look", "come", "say"
+  "razr", "motorola", "phone", "just", "get", "like", "thing", "really",
+  "know", "time", "people", "would", "also", "much", "use", "see",
+  "one", "will", "can", "even", "still", "want", "review",
+  "moto", "device", "smartphone", "im", "dont", "ive", "thats", "got",
+  "amp", "u", "ur", "ok", "yeah", "lol", "gonna", "good", "make",
+  "think", "need", "look", "come", "say"
 )
-tokens <- quanteda::tokens_remove(tokens, pattern = c(quanteda::stopwords("en"), custom_stops))
+tokens <- quanteda::tokens_remove(
+  tokens, pattern = c(quanteda::stopwords("en"), custom_stops))
 ```
 
 ## Stemming & Lemmatization
 
 ```{r stemming, echo=TRUE}
-tokens <- quanteda::tokens_replace(tokens, pattern = quanteda::featnames(quanteda::dfm(tokens)),replacement = textstem::lemmatize_words(quanteda::featnames(quanteda::dfm(tokens)))
-)
+feats <- quanteda::types(tokens)
+tokens <- quanteda::tokens_replace(
+  tokens,
+  pattern     = feats,
+  replacement = textstem::lemmatize_words(feats),
+  valuetype   = "fixed")
 ```
 
 ## DFM Creation & Frequency Filtering
@@ -472,144 +518,71 @@ tokens <- quanteda::tokens_replace(tokens, pattern = quanteda::featnames(quanted
 ```{r frequency-filter, echo=TRUE}
 dfm <- quanteda::dfm(tokens)
 
-dfm <- quanteda::dfm_select(dfm, pattern     = "^.{3,}$", valuetype   = "regex", selection   = "keep")
+# Keep only tokens of 3+ characters
+dfm <- quanteda::dfm_select(dfm, pattern = "^.{3,}$",
+                            valuetype = "regex", selection = "keep")
 
-dfm
-
+cat("Features before frequency trim:", nfeat(dfm), "\n")
+# Drop very rare terms (appear fewer than 10) 
 dfm <- dfm_trim(dfm, min_termfreq = 10)
-dfm
+cat("Features after frequency trim:", nfeat(dfm), "\n")
 
-topfeatures(dfm)
+cat("\nMost frequent features:\n")
+print(topfeatures(dfm, 15))
 
-length_features <- data.frame(count = quanteda::topfeatures(dfm, ncol(dfm))) # create data frame 
-length_features$length <- nchar(rownames(length_features)) # extract token length
-length_features[ which(length_features$length %in% c(1, 2)), ] # filter on token length
-
-dfm <- dfm[ -which((rowSums(dfm)) %in% 0), ]
+# Drop any documents left empty after all filtering
+empty_docs <- which(rowSums(dfm) == 0)
+if (length(empty_docs) > 0) dfm <- dfm[-empty_docs, ]
+cat("\nFinal DFM:", ndoc(dfm), "documents x", nfeat(dfm), "features\n")
 ```
 
-## Synonym consolidation
+## Selecting K 
+```{r selecting-k, echo=TRUE}
+dtm <- quanteda::convert(dfm, to = "topicmodels")
 
-```{r synonym-consolidation, echo=TRUE}
-# Add this chunk under ## Synonym consolidation
-# Simple flat vectors — pattern and replacement must be same length
-tokens <- quanteda::tokens_replace(tokens,
-  pattern = c(
-    # Form factor
-    "fold", "foldable", "folding",
-    "flip", "flipping",
-    # Camera
-    "cam", "cams",
-    # Battery
-    "charging", "charger",
-    # Display (already have "screen" as stop word — keep display as synonym)
-    "display", "displays",
-    # Hinge
-    "hinges", "hinging",
-    # Price
-    "pricing", "priced", "pricey", "expensive", "costly",
-    # Competitors
-    "galaxy",
-    "iphone", "ios", "apple"
-  ),
-  replacement = c(
-    # Form factor
-    "fold", "fold", "fold",
-    "flip", "flip",
-    # Camera
-    "camera", "camera",
-    # Battery
-    "charge", "charge",
-    # Display
-    "screen", "screen",
-    # Hinge
-    "hinge", "hinge",
-    # Price
-    "price", "price", "price", "price", "price",
-    # Competitors
-    "samsung",
-    "apple", "apple", "apple"
-  ),
-  valuetype = "fixed"
-)
+set.seed(42)
+n_docs    <- nrow(dtm)
+train_idx <- sample(n_docs, floor(n_docs * 0.8))
+dtm_train <- dtm[train_idx, ]
+dtm_test  <- dtm[-train_idx, ]
+
+k_values <- 2:15
+perplexity_scores <- sapply(k_values, function(k) {
+  m <- topicmodels::LDA(dtm_train, k = k, method = "Gibbs",
+                        control = list(seed = 42, iter = 1000, burnin = 200))
+  topicmodels::perplexity(m, newdata = dtm_test)
+})
+
+perplexity_df <- data.frame(k = k_values, perplexity = perplexity_scores) |>
+  mutate(improvement = dplyr::lag(perplexity) - perplexity)
+
+ggplot(perplexity_df, aes(x = k, y = perplexity)) +
+  geom_line(colour = "#2C7BB6") +
+  geom_point(colour = "#2C7BB6", size = 2) +
+  geom_vline(xintercept = 7, linetype = "dashed", colour = "red") +
+  labs(title = "Held-out Perplexity by Number of Topics (k)",
+       subtitle = "Dashed line = chosen k (elbow)",
+       x = "k", y = "Perplexity") +
+  theme_minimal()
+
+knitr::kable(perplexity_df, digits = 2,
+             caption = "Held-out perplexity and per-step improvement by k")
 ```
 
 ## LDA
 
 ```{r topic-modeling, echo=TRUE}
+K <- 7
 
-dtm <- quanteda::convert(dfm, to = "topicmodels")
-
-# Split DTM into train/test for perplexity evaluation
 set.seed(42)
-n_docs      <- nrow(dtm)
-train_idx   <- sample(n_docs, floor(n_docs * 0.8))
-dtm_train   <- dtm[train_idx, ]
-dtm_test    <- dtm[-train_idx, ]
-
-# Test k values from 2 to 15
-k_values <- 2:15
-
-perplexity_scores <- sapply(k_values, function(k) {
-  cat("Fitting k =", k, "\n")
-  m <- topicmodels::LDA(
-    dtm_train,
-    k       = k,
-    method  = "Gibbs",
-    control = list(seed = 42, iter = 1000, burnin = 200)
-  )
-  topicmodels::perplexity(m, newdata = dtm_test)  # evaluate on held-out test set
-})
-
-# Plot
-perplexity_df <- data.frame(k = k_values, perplexity = perplexity_scores)
-
-ggplot(perplexity_df, aes(x = k, y = perplexity)) +
-  geom_line(colour = "#2C7BB6") +
-  geom_point(colour = "#2C7BB6", size = 2) +
-  labs(title = "Held-out Perplexity by Number of Topics (k)",
-       subtitle = "Lower = better generalisation; choose the elbow",
-       x = "k", y = "Perplexity") +
-  theme_minimal()
-
-print(perplexity_df)
-
-K <- 7 # choose based on the plot.
-
 lda_model <- seededlda::textmodel_lda(dfm, k = K)
 
-# Then analyse sentiment per topic after the fact
 topic_assignments <- data.frame(
   doc_id    = docnames(dfm),
   topic     = topics(lda_model),
-  sentiment = docvars(dfm)$ave_sentiment
+  sentiment = docvars(dfm)$ave_sentiment,
+  stringsAsFactors = FALSE
 )
-
-# Average sentiment per topic — this is your comparison
-topic_sentiment <- topic_assignments |>
-  group_by(topic) |>
-  summarise(mean_sentiment = mean(sentiment, na.rm = TRUE),
-            n = n())
-
-# Visualize sentiment distribution across topics.
-ggplot(topic_sentiment, aes(x = factor(topic), y = mean_sentiment)) +
-  geom_bar(stat = "identity", fill = "#2C7BB6") +
-  labs(title = "Average Sentiment by Topic",
-        x = "Topic", y = "Average Sentiment") +
-  theme_minimal()
-  
-# You can also look at the distribution of sentiment within each topic:
-ggplot(topic_assignments, aes(x = factor(topic), y = sentiment)) +
-  geom_boxplot(fill = "#2C7BB6") +
-  labs(title = "Sentiment Distribution by Topic",
-        x = "Topic", y = "Sentiment") +
-  theme_minimal()
-```
-
-## Improving the model
-
-```{r improving-model, echo=TRUE}
-
 ```
 
 ## Stability Analysis
@@ -620,12 +593,10 @@ seeds <- c(42L, 123L, 999L)
 stability_results <- lapply(seeds, function(s) {
   set.seed(s)
   m     <- seededlda::textmodel_lda(dfm, k = K)
-  terms <- seededlda::terms(m, 5)  # matrix: 5 rows (words) x K cols (topics)
-  # Collapse each topic's top 5 words into one string per topic
-  apply(terms, 2, paste, collapse = ", ")  # returns named vector of length K
+  trms  <- seededlda::terms(m, 5)
+  apply(trms, 2, paste, collapse = ", ")
 })
 
-# Each result is a named vector of length K — bind into a clean table
 stability_df <- data.frame(
   topic    = paste0("Topic ", 1:K),
   seed_42  = stability_results[[1]],
@@ -637,24 +608,61 @@ stability_df <- data.frame(
 knitr::kable(stability_df,
              col.names = c("Topic", "Seed 42", "Seed 123", "Seed 999"),
              caption   = "Top 5 words per topic across 3 seeds (stability check)")
-
 ```
 
 # Results
 
-```{r results, echo=TRUE}
-# Show top 10 words per topic with your human-readable label
+## Topic Labels
+```{r topic-labels, echo=TRUE}
+# Top 10 terms per topic
 topic_terms <- seededlda::terms(lda_model, 10)
 knitr::kable(topic_terms, caption = "Top 10 terms per topic")
 
-# TODO: label each topic based on dominant terms, e.g.:
-# topic1 = "Price & Value", topic2 = "Camera Quality", etc.
+# Labels 
+topic_labels <- c(
+  "topic1" = "Durability & Build Quality issues",
+  "topic2" = "Form Factor & Design",
+  "topic3" = "Competitor Comparison",
+  "topic4" = "Hardware & Specs",
+  "topic5" = "Price & Purchase",
+  "topic6" = "Apps & Functionality",
+  "topic7" = "Software & Support"
+)
+```
 
+## Topic Word Distributions
+```{r topic-word-dist, echo=TRUE, fig.height=7}
+# Extract per-topic word probabilities
+phi <- lda_model$phi
+beta_df <- as.data.frame(t(phi)) |>
+  tibble::rownames_to_column("term") |>
+  tidyr::pivot_longer(-term, names_to = "topic", values_to = "beta") |>
+  group_by(topic) |>
+  slice_max(beta, n = 8, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(label = topic_labels[topic])
+
+ggplot(beta_df,
+       aes(x = tidytext::reorder_within(term, beta, topic),
+           y = beta, fill = label)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~label, scales = "free_y") +
+  coord_flip() +
+  tidytext::scale_x_reordered() +
+  labs(title = "Top terms per topic (word probability, beta)",
+       x = NULL, y = "beta") +
+  theme_minimal()
+```
+
+## Topic Prominence
+
+```{r topic-prominence, echo=TRUE}
 topic_counts <- as.data.frame(table(topics(lda_model))) |>
   rename(topic = Var1, n = Freq) |>
-  mutate(prop = n / sum(n))
+  mutate(prop  = n / sum(n),
+         label = topic_labels[as.character(topic)])
 
-ggplot(topic_counts, aes(x = reorder(topic, prop), y = prop)) +
+ggplot(topic_counts, aes(x = reorder(label, prop), y = prop)) +
   geom_col(fill = "#2C7BB6") +
   coord_flip() +
   scale_y_continuous(labels = scales::percent) +
@@ -662,22 +670,120 @@ ggplot(topic_counts, aes(x = reorder(topic, prop), y = prop)) +
        x = NULL, y = "Proportion of documents") +
   theme_minimal()
 
-  # Merge topic assignments back with source info
+knitr::kable(topic_counts |> select(label, n, prop),
+             digits = 3, col.names = c("Topic", "N", "Proportion"),
+             caption = "Relative prominence of each topic")
+```
+
+## Sentiment by Topic
+
+```{r sentiment-by-topic, echo=TRUE}
+topic_sentiment <- topic_assignments |>
+  group_by(topic) |>
+  summarise(mean_sentiment = mean(sentiment, na.rm = TRUE),
+            n = n(), .groups = "drop") |>
+  mutate(label = topic_labels[topic])
+
+ggplot(topic_sentiment, aes(x = reorder(label, mean_sentiment), y = mean_sentiment)) +
+  geom_col(fill = "#2C7BB6") +
+  coord_flip() +
+  labs(title = "Average Sentiment by Topic",
+       x = NULL, y = "Average sentiment") +
+  theme_minimal()
+
+ggplot(topic_assignments |> mutate(label = topic_labels[topic]),
+       aes(x = label, y = sentiment)) +
+  geom_boxplot(fill = "#2C7BB6") +
+  coord_flip() +
+  labs(title = "Sentiment Distribution by Topic",
+       x = NULL, y = "Sentiment") +
+  theme_minimal()
+```
+
+## Statistical Tests
+
+### Do Reddit and YouTube discuss different topics?
+```{r test-chisq, echo=TRUE}
 topic_source <- topic_assignments |>
   mutate(doc_id = as.integer(doc_id)) |>
-  left_join(combined_data |> select(id, source), 
-            by = c("doc_id" = "id"))
+  left_join(combined_data |> select(id, platform, era),
+            by = c("doc_id" = "id")) |>
+  mutate(label = topic_labels[topic])
 
-contingency <- table(topic_source$topic, topic_source$source)
-knitr::kable(contingency, caption = "Topic distribution by source")
+contingency <- table(topic_source$label, topic_source$platform)
+knitr::kable(contingency, caption = "Topic distribution: Reddit vs YouTube")
 
 chi_result <- chisq.test(contingency)
 print(chi_result)
-# Interpret: p < 0.05 means Reddit and YouTube discuss different topics
 ```
 
-## Topic Word Distributions
 
-## Sometother shit
+### Does sentiment differ across topics?
+```{r test-kruskal, echo=TRUE}
+kw_result <- kruskal.test(sentiment ~ factor(topic), data = topic_assignments)
+print(kw_result)
+
+pw <- pairwise.wilcox.test(topic_assignments$sentiment,
+                           topic_assignments$topic,
+                           p.adjust.method = "BH")
+print(pw)
+```
+
+### Old vs New Era: does sentiment differ?
+```{r test-era, echo=TRUE}
+era_sentiment <- topic_source |>
+  filter(!is.na(era))
+
+cat("Sample sizes by era:\n")
+print(table(era_sentiment$era))
+
+# Wilcoxon rank-sum (non-parametric, two groups)
+if (length(unique(era_sentiment$era)) == 2 &&
+    all(table(era_sentiment$era) > 5)) {
+  era_test <- wilcox.test(sentiment ~ era, data = era_sentiment)
+  print(era_test)
+} else {
+  cat("Not enough old-brand references for a reliable test.\n")
+}
+
+# Mean sentiment by era
+era_sentiment |>
+  group_by(era) |>
+  summarise(mean_sentiment = mean(sentiment, na.rm = TRUE),
+            n = n(), .groups = "drop") |>
+  knitr::kable(digits = 3, caption = "Sentiment: old-brand references vs new-only")
+```
+
+## Customer Value Triad
+```{r value-triad, echo=TRUE}
+triad_map <- data.frame(
+  topic = paste0("topic", 1:7),
+  dimension = c("Quality",   # Durability & Build Quality
+                "Quality",   # Form Factor & Design
+                "Quality",   # Competitor Comparison
+                "Quality",   # Hardware & Specs
+                "Price",     # Price & Purchase
+                "Quality",   # Apps & Functionality
+                "Quality"))  # Software & Support
+
+#nobody is talking about the servicwe and support aspect lmao
+triad_summary <- topic_counts |>
+  mutate(topic = as.character(topic)) |>   # already "topic1", just coerce factor->char
+  left_join(triad_map, by = "topic") |>
+  group_by(dimension) |>
+  summarise(total_prop = sum(prop), .groups = "drop")
+
+ggplot(triad_summary, aes(x = reorder(dimension, total_prop), y = total_prop)) +
+  geom_col(fill = "#2C7BB6") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Customer Value Triad coverage",
+       x = NULL, y = "Share of corpus") +
+  theme_minimal()
+
+knitr::kable(triad_summary, digits = 3,
+             col.names = c("Value dimension", "Share of corpus"),
+             caption = "Customer value triad reconstructed from topics")
+```
 
 # Reflection
