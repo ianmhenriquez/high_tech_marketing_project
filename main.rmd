@@ -245,7 +245,7 @@ print(table(reddit_all$subreddit))
 ```
 
 ```{r youtube-fetch, echo=TRUE}
-fetch_youtube_comments <- function(video_id, max_comments = 200, api_key = Sys.getenv("YOUTUBE_KEY")) {
+fetch_youtube_comments <- function(video_id, max_comments = 400, api_key = Sys.getenv("YOUTUBE_KEY")) {
   if (identical(api_key, "")) {
     stop("YOUTUBE_KEY is not set. Load it from .env or your environment before knitting.")
   }
@@ -257,7 +257,7 @@ fetch_youtube_comments <- function(video_id, max_comments = 200, api_key = Sys.g
     query <- list(
       part       = "snippet",
       videoId    = video_id,
-      maxResults = 100,
+      maxResults = 200,
       textFormat = "plainText",
       key        = api_key
     )
@@ -328,7 +328,7 @@ if (file.exists("data/youtube_comments.csv")) {
   youtube_all <- purrr::map2_dfr(
     razr_videos,
     names(razr_videos),
-  ~   fetch_youtube_comments(.x, max_comments = 200) %>%
+  ~   fetch_youtube_comments(.x, max_comments = 400) %>%
         dplyr::mutate(channel = .y)
   )
   # Save to CSV for future runs
@@ -352,7 +352,12 @@ we have 2 separate data frames for reddit, and youtube, we need to merge them in
 # merge data frames by piping them so i dont lose my mind. keep like count for youtube, keep score for reddit.
 reddit_clean <- reddit_all |> filter(type == "comment", !is.na(body), body != "[deleted]", body != "[removed]", nchar(trimws(body)) > 20) |> select(author, body, score, subreddit) |> rename(source = subreddit)
 
-youtube_clean <- youtube_all |> select(author, body, like_count, channel) |> rename(score = like_count, source = channel)
+youtube_clean <- youtube_all |>
+  mutate(
+    score = if ("like_count" %in% names(youtube_all)) youtube_all$like_count else NA_real_,
+    source = channel
+  ) |>
+  select(author, body, score, source)
 
 combined_data <- dplyr::bind_rows(reddit_clean, youtube_clean)
 
@@ -419,8 +424,8 @@ tokens <- quanteda::tokens_tolower(tokens)
 ```{r stop-words, echo=TRUE}
 quanteda::stopwords("en")
 custom_stops <- c(
-  "razr", "motorola", "phone", "just", "get", "like",
-  "one", "will", "can", "also", "even", "still", "want",
+  "razr", "motorola", "phone", "just", "get", "like", "thing", "really", "know", "time", "people", "would", "also", "much", "use", "see",
+  "one", "will", "can", "also", "even", "still", "want", "review",
   "moto", "device", "smartphone", "im", "dont", "ive", "thats", "got", "amp",
   "u", "ur", "ok", "yeah", "lol", "gonna", "screen", "use", "good", "get", "make", "think", "need", "look", "come", "say"
 )
