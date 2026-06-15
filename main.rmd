@@ -1,7 +1,7 @@
 ---
 title: "High Tech Marketing Text Analysis"
 subtitle: "Brand: Motorola Razr 2025"
-author: "Group 12?"
+author: "Group 2"
 output:
   pdf_document: default
 editor_options: 
@@ -476,6 +476,10 @@ the actual modelling of the text analysis.
 
 ## Corpus Creation
 
+The data may now be used to create a corpus, with this the field is
+spread out around the individual reviews and their subsequent sentiment
+towards the RAZR.
+
 ```{r corpus-creation, echo=TRUE}
 corpus <- quanteda::corpus(combined_data, docid_field = "id", text_field = "body")
 
@@ -493,7 +497,11 @@ ggplot(data.frame(s = quanteda::docvars(corpus)$ave_sentiment),
 
 ## Tokenization
 
-Explain how we tokenized the data and why.
+With the corpus created the data goes though tokenization, with this the
+text is broken down into smaller pieces by way of removing aspects such
+as punctuation, separators, and other symbols as may be seen in the
+chunk below. This will allow the text to be numerically analyzed further
+down the line.
 
 ```{r tokenization}
 tokens <- quanteda::tokens(corpus,
@@ -569,6 +577,11 @@ tokens <- quanteda::tokens_remove(
 
 ## Stemming & Lemmatization
 
+Having simplified and consolidated the words together, they may now be
+broken down to their root term by way of stemming and lemmatization.
+This ensures that small variations of words will be treated as the same
+term.
+
 ```{r stemming, echo=TRUE}
 feats <- quanteda::types(tokens)
 tokens <- quanteda::tokens_replace(
@@ -579,6 +592,13 @@ tokens <- quanteda::tokens_replace(
 ```
 
 ## DFM Creation & Frequency Filtering
+
+A Document-Feature-Matrix may now be made with the stemmed and
+lemmatized tokens, here the rows shall be the documents, and the columns
+shall be unique words. With this some additional filtering steps are
+applied to clean the matrix from rare, empty, and large terms are
+removed. This reduces the features significantly with the final FDM
+having 656 features by 1785 documents.
 
 ```{r frequency-filter, echo=TRUE}
 dfm <- quanteda::dfm(tokens)
@@ -602,6 +622,12 @@ cat("\nFinal DFM:", ndoc(dfm), "documents x", nfeat(dfm), "features\n")
 ```
 
 ## Selecting K
+
+Prior to the topic modelling the split of data used for training and
+testing must be determined, for this the ideal number of topics or k's
+must be selected. This is done with the elbow method, where perplexity
+is computed from a Document Term Matrix from a converted DFM. From this
+a k of 7 is selected as its the sharpest elbow visible.
 
 ```{r selecting-k, echo=TRUE}
 dtm <- quanteda::convert(dfm, to = "topicmodels")
@@ -637,6 +663,9 @@ knitr::kable(perplexity_df, digits = 2,
 
 ## LDA
 
+The k of 7 is then used within a Latent Dirichlet Allocation topic
+model, here the data is assigned to their most likely topics
+
 ```{r topic-modeling, echo=TRUE}
 K <- 7
 
@@ -652,6 +681,11 @@ topic_assignments <- data.frame(
 ```
 
 ## Stability Analysis
+
+Since LDA results can vary based on the seed which was randomly assigned
+during the model fitting a stbility analysis is conducted to see how the
+topics perform over three different runs. For each run the top 5 words
+are collected per topic, these are then com
 
 ```{r stability-analysis, echo=TRUE}
 seeds <- c(42L, 123L, 999L)
