@@ -430,12 +430,6 @@ print(table(combined_data$language))
 
 ```
 
-Side note maybe we dont have to do all of them based on the quality of
-the data we get, but we should at least explain how we would do them and
-why they are important.
-
-I suppose, you got that tho twin \<3
-
 ## Filtering & Cleaning
 
 The data may now be filtered by various means. From maintaining only
@@ -627,7 +621,7 @@ Prior to the topic modelling the split of data used for training and
 testing must be determined, for this the ideal number of topics or k's
 must be selected. This is done with the elbow method, where perplexity
 is computed from a Document Term Matrix (DTM) from a converted DFM. From
-this a k of 7 is selected as its the sharpest elbow visible.
+this a k of seven is selected as its the sharpest elbow visible.
 
 ```{r selecting-k, echo=TRUE}
 dtm <- quanteda::convert(dfm, to = "topicmodels")
@@ -686,10 +680,10 @@ topic_assignments <- data.frame(
 
 Since LDA results can vary based on the seed which was randomly assigned
 during the model fitting a stbility analysis is conducted to see how the
-topics perform over 3 different runs. For each run the top 5 words are
-collected per topic, these are then compiled and shown, though little
-may be taken away from their content it does show quite some overlap
-between the seeds.
+topics perform over three different runs. For each run the top five
+words are collected per topic, these are then compiled and shown, though
+little may be taken away from their content it does show quite some
+overlap between the seeds.
 
 ```{r stability-analysis, echo=TRUE}
 seeds <- c(42L, 123L, 999L)
@@ -880,8 +874,8 @@ print(chi_result)
 ### Does sentiment differ across topics?
 
 A Kruskal-Wallis test may be used to check whether the sentiment scores
-differ across the 7 topics, from which a Wilcoxon rank-sum tests are run
-between the topic pairs with an adjusted p-value using a
+differ across the seven topics, from which a Wilcoxon rank-sum tests are
+run between the topic pairs with an adjusted p-value using a
 Benjamini-Hochberg (BH) method. The results of which show that the tests
 are significant, meaning that the sentiment does differ between the
 topics.
@@ -899,10 +893,10 @@ print(pw)
 ### Old vs New Era: does sentiment differ?
 
 Much has been discussed on user sentiments and prominence on the
-outlined 7 topics, however some insight may also be found in comparing
-the old RAZR models to the new ones. The output of which shows that the
-old RAZR's are perceived more positively than the new ones. As the
-original models were seen as icons of their time prior to the
+outlined seven topics, however some insight may also be found in
+comparing the old RAZR models to the new ones. The output of which shows
+that the old RAZR's are perceived more positively than the new ones. As
+the original models were seen as icons of their time prior to the
 introduction of the iPhone, it would explain the notion that consumers
 look back at it more fondly than the new model which does find itself in
 a much more contested and at times chaotic market.
