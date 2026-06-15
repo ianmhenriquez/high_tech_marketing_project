@@ -592,7 +592,7 @@ lemmatized tokens, here the rows shall be the documents, and the columns
 shall be unique words. With this some additional filtering steps are
 applied to clean the matrix from rare, empty, and large terms are
 removed. This reduces the features significantly with the final FDM
-having 656 features by 1785 documents.
+having 559 features by 1737 documents.
 
 ```{r frequency-filter, echo=TRUE}
 dfm <- quanteda::dfm(tokens)
@@ -847,7 +847,7 @@ given on the data split between Reddit and YouTube. These were primarily
 numerical, but how does their data differ inherently? That is what will
 be explored below statistically.
 
-### Do Reddit and YouTube discuss different topics?
+### Do the two customer segments (Reddit and YouTube) discuss different topics?
 
 With Reddit and YouTube having inherently different user bases, one
 would assume that their topics of prominence would also differ. The code
@@ -894,12 +894,15 @@ print(pw)
 
 Much has been discussed on user sentiments and prominence on the
 outlined seven topics, however some insight may also be found in
-comparing the old RAZR models to the new ones. The output of which shows
-that the old RAZR's are perceived more positively than the new ones. As
-the original models were seen as icons of their time prior to the
-introduction of the iPhone, it would explain the notion that consumers
-look back at it more fondly than the new model which does find itself in
-a much more contested and at times chaotic market.
+comparing the old RAZR models to the new ones. Two points should be stressed. First, the old-referencing group is
+very small (39 documents against 1,698), so any comparison is tentative.
+Second, although mean sentiment is slightly higher for old-referencing
+documents (0.107) than for new-only documents (0.080), a Wilcoxon
+rank-sum test finds this difference is not statistically significant (W =
+29,572, p = .25). We therefore cannot conclude that the original RAZR is
+viewed more favourably than the new one; on the available evidence, there
+is no reliable sentiment difference between nostalgia-driven and
+new-focused discussion.
 
 ```{r test-era, echo=TRUE}
 era_sentiment <- topic_source |>
@@ -933,6 +936,9 @@ below shows is two major conclusions: the quality aspect easily
 dominates the corpus, and the service aspect is completely neglected.
 This may also speak to the appeal of either the RAZR or Motorola as a
 whole, and what is either of importance or relevance to their consumers.
+The complete absence of Service, is a meaningful
+finding in its own right, suggesting that after-sales support and service
+are simply not part of how this audience evaluates the RAZR.
 
 ```{r value-triad, echo=TRUE}
 triad_map <- data.frame(
@@ -945,7 +951,6 @@ triad_map <- data.frame(
                 "Quality",   # Apps & Functionality
                 "Quality"))  # Software & Support
 
-#nobody is talking about the servicwe and support aspect lmao
 triad_summary <- topic_counts |>
   mutate(topic = as.character(topic)) |>   # already "topic1", just coerce factor->char
   left_join(triad_map, by = "topic") |>
