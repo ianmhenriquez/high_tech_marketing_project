@@ -593,7 +593,7 @@ tokens <- quanteda::tokens_replace(
 
 ## DFM Creation & Frequency Filtering
 
-A Document-Feature-Matrix may now be made with the stemmed and
+A Document-Feature-Matrix (DFM) may now be made with the stemmed and
 lemmatized tokens, here the rows shall be the documents, and the columns
 shall be unique words. With this some additional filtering steps are
 applied to clean the matrix from rare, empty, and large terms are
@@ -626,8 +626,8 @@ cat("\nFinal DFM:", ndoc(dfm), "documents x", nfeat(dfm), "features\n")
 Prior to the topic modelling the split of data used for training and
 testing must be determined, for this the ideal number of topics or k's
 must be selected. This is done with the elbow method, where perplexity
-is computed from a Document Term Matrix from a converted DFM. From this
-a k of 7 is selected as its the sharpest elbow visible.
+is computed from a Document Term Matrix (DTM) from a converted DFM. From
+this a k of 7 is selected as its the sharpest elbow visible.
 
 ```{r selecting-k, echo=TRUE}
 dtm <- quanteda::convert(dfm, to = "topicmodels")
@@ -663,8 +663,10 @@ knitr::kable(perplexity_df, digits = 2,
 
 ## LDA
 
-The k of 7 is then used within a Latent Dirichlet Allocation topic
-model, here the data is assigned to their most likely topics
+The k of 7 is then used within a Latent Dirichlet Allocation (LDA) topic
+model, here the data is assigned to their most likely topics from which
+they are then assigned to an ID. This will serve to identify and match
+reoccurring words into specific topics.
 
 ```{r topic-modeling, echo=TRUE}
 K <- 7
@@ -684,8 +686,10 @@ topic_assignments <- data.frame(
 
 Since LDA results can vary based on the seed which was randomly assigned
 during the model fitting a stbility analysis is conducted to see how the
-topics perform over three different runs. For each run the top 5 words
-are collected per topic, these are then com
+topics perform over 3 different runs. For each run the top 5 words are
+collected per topic, these are then compiled and shown, though little
+may be taken away from their content it does show quite some overlap
+between the seeds.
 
 ```{r stability-analysis, echo=TRUE}
 seeds <- c(42L, 123L, 999L)
@@ -776,8 +780,8 @@ ggplot(beta_df,
 ## Topic Prominence
 
 Sticking with the seven topics, they are now cross-referenced to each
-other. This will aid in showing just how important each of these topics
-themselves are to the consumers, at least in how prominently they're
+other. This will aid in showing just how widely discussed each of these
+topics are to the consumers, at least in how prominently they're
 mentioned. The code chunk below shows that the most prominent topic is
 for "Apps & Functionality", with the least prominent one being the
 "Software & Support". This is interesting in showing that the actual
@@ -806,7 +810,18 @@ knitr::kable(topic_counts |> select(label, n, prop),
 
 ## Sentiment by Topic
 
-A
+As for the consumer sentiment around each topic, the average sentiment
+scores are grouped by topic, from which the mean is then calculated.
+From this a box plot is used to show that the Price & Purchase topic
+ranks as the highest average sentiment by a solid margin among
+consumers, meaning that they view the topic quite positively. On the
+opposite side of the spectrum is the Durability & Build Quality Issues
+topic, indicating that consumers do not perceive said topic positively.
+These may be expected, given that the foldable smartphones are known to
+have good internal specifications, while their primary weakness is, and
+this might come as a surprise to some, is the foldable discplay. The
+plastic screen and hinge mechanisms have their kinks and are still
+perceived as fragile.
 
 ```{r sentiment-by-topic, echo=TRUE}
 topic_sentiment <- topic_assignments |>
@@ -864,6 +879,13 @@ print(chi_result)
 
 ### Does sentiment differ across topics?
 
+A Kruskal-Wallis test may be used to check whether the sentiment scores
+differ across the 7 topics, from which a Wilcoxon rank-sum tests are run
+between the topic pairs with an adjusted p-value using a
+Benjamini-Hochberg (BH) method. The results of which show that the tests
+are significant, meaning that the sentiment does differ between the
+topics.
+
 ```{r test-kruskal, echo=TRUE}
 kw_result <- kruskal.test(sentiment ~ factor(topic), data = topic_assignments)
 print(kw_result)
@@ -875,6 +897,15 @@ print(pw)
 ```
 
 ### Old vs New Era: does sentiment differ?
+
+Much has been discussed on user sentiments and prominence on the
+outlined 7 topics, however some insight may also be found in comparing
+the old RAZR models to the new ones. The output of which shows that the
+old RAZR's are perceived more positively than the new ones. As the
+original models were seen as icons of their time prior to the
+introduction of the iPhone, it would explain the notion that consumers
+look back at it more fondly than the new model which does find itself in
+a much more contested and at times chaotic market.
 
 ```{r test-era, echo=TRUE}
 era_sentiment <- topic_source |>
@@ -941,3 +972,37 @@ knitr::kable(triad_summary, digits = 3,
 ```
 
 # Reflection
+
+Nostalgia is a tool often used to aid brands revitalize previous
+successes, the RAZR's re-branding is no different. Using the data
+collected from YouTube and Reddit the RAZR's sentiment and prominence
+with regards to the seven outlined topics shows that Motorola has to an
+extent succeeded in cashing in on the nostalgia.
+
+With positive sentiments around the price and design, it shows that
+consumers do not mind their pricing strategy and do very much enjoy the
+old design which was notorious at the time. But if motorola were to want
+to satisfy its customers further in and increase the middle sentiment
+what broader, then extra steps must still be taken to improve the
+software and apps functionality and support in comparison to its
+competitors, which are mainly Samsung and Apple.
+
+However, for the lowest sentiment score of durability and build quality
+there may have an additional caveat which could be to Motorola's
+advantage. The field of foldable smartphones is quite a new one, where
+one phone iteration may already introduce a wide range of improvements,
+the Motorola RAZR and Samsung Galaxy Z-Flip and Z-Fold are already
+examples of this. The build quality is still compromised to account for
+the innovative folding display, but is not per-se one specific to the
+RAZR. Meaning that if the path of innovation continues and Motorola
+works more on the software side of the equation, the RAZR re-brand may
+serve as a positive example for what one may look like.
+
+The utilized methods may always have room for refinement as briefly
+discussed during the coding process. However, it is believed that the
+sources from which the data was collected as well as the methods which
+were used are of sufficient quality to extract clear, concise and
+reliable results for the purpose of this analysis. Though future
+iterations may work to experiment with broader sources of collection, as
+well as a more in depth analysis on the RAZR and its competitors for the
+sake of comparison.
